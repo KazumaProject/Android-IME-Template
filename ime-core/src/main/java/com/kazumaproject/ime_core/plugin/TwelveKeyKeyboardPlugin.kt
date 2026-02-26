@@ -8,34 +8,19 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.GridLayout
 import android.widget.LinearLayout
+import androidx.core.widget.TextViewCompat
+import com.kazumaproject.ime_core.mvi.KeyActionRaw
 import com.kazumaproject.ime_core.mvi.KeyboardAction
+import com.kazumaproject.ime_core.plugin.twelvekey.model.KeyGesture
+import com.kazumaproject.ime_core.plugin.twelvekey.model.KeyOutput
+import com.kazumaproject.ime_core.plugin.twelvekey.model.KeySpec
+import com.kazumaproject.ime_core.plugin.twelvekey.ui.FlickGuideController
+import com.kazumaproject.ime_core.plugin.twelvekey.ui.FlickGuideSpec
 import kotlin.math.roundToInt
 
-/**
- * iOS風 12 Key Keyboard Plugin（拡張可能版）
- *
- * 要件:
- * - actionRow（操作ボタン領域）を上下左右に配置できる
- * - actionButton をユーザーが任意に配置できる
- * - デフォルト: 右側のみ
- * - Horizontal（横画面想定）では左右に出せる（LEFT_RIGHT）
- *
- * 使い方（例）:
- * class MyPlugin : TwelveKeyKeyboardPlugin() {
- *   override fun placementFor(mode: LayoutMode): ActionPlacement =
- *      if (mode == LayoutMode.HORIZONTAL) ActionPlacement.LEFT_RIGHT else ActionPlacement.BOTTOM
- *
- *   override fun actionButtonsFor(side: ActionSide, mode: LayoutMode): List<ActionButtonSpec> =
- *      when (side) {
- *        ActionSide.LEFT -> listOf(specCursorLeft(), specCursorRight())
- *        ActionSide.RIGHT -> listOf(specBackspace(), specEnter())
- *        else -> emptyList()
- *      }
- * }
- */
 open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin {
 
     private var dispatch: ((KeyboardAction) -> Unit)? = null
@@ -44,113 +29,74 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin {
         this.dispatch = dispatch
     }
 
-    // -------------------------
-    // Extensibility points
-    // -------------------------
-
-    enum class LayoutMode { VERTICAL, HORIZONTAL } // VERTICAL=portrait想定, HORIZONTAL=landscape想定
+    enum class LayoutMode { VERTICAL, HORIZONTAL }
     enum class ActionPlacement { LEFT, RIGHT, TOP, BOTTOM, LEFT_RIGHT }
     enum class ActionSide { LEFT, RIGHT, TOP, BOTTOM }
 
     data class ActionButtonSpec(
         val label: String,
         val action: KeyboardAction,
-        val widthWeight: Float = 1f,  // 横並び時の幅
-        val heightDp: Int = 44        // 縦並び時も含めたボタンの高さ
+        val widthWeight: Float = 1f,
+        val heightDp: Int = 44
     )
 
-    /**
-     * action領域の配置を決める
-     * デフォルト:
-     * - 縦画面: RIGHT
-     * - 横画面: LEFT_RIGHT
-     */
     protected open fun placementFor(mode: LayoutMode): ActionPlacement {
         return if (mode == LayoutMode.HORIZONTAL) ActionPlacement.LEFT_RIGHT else ActionPlacement.RIGHT
     }
 
-    /**
-     * サイドごとの action ボタン定義（ユーザーが任意で入れ替え可能）
-     * デフォルト:
-     * - RIGHT: ← → space ⌫ return を縦に積む（使いやすい最小）
-     * - HORIZONTAL(LEFT_RIGHT): LEFTに←→、RIGHTにspace/⌫/return
-     *
-     * ※ TOP/BOTTOM を使う場合もここを override して返す
-     */
     protected open fun actionButtonsFor(
         side: ActionSide,
         mode: LayoutMode
     ): List<ActionButtonSpec> {
         return when (placementFor(mode)) {
-            ActionPlacement.RIGHT -> {
-                if (side == ActionSide.RIGHT) {
-                    listOf(
-                        specCursorLeft(),
-                        specCursorRight(),
-                        specSpace(),
-                        specBackspace(),
-                        specEnter()
-                    )
-                } else emptyList()
-            }
+            ActionPlacement.RIGHT -> if (side == ActionSide.RIGHT) listOf(
+                specCursorLeft(), specCursorRight(), specSpace(), specBackspace(), specEnter()
+            ) else emptyList()
 
-            ActionPlacement.LEFT -> {
-                if (side == ActionSide.LEFT) {
-                    listOf(
-                        specCursorLeft(),
-                        specCursorRight(),
-                        specSpace(),
-                        specBackspace(),
-                        specEnter()
-                    )
-                } else emptyList()
-            }
+            ActionPlacement.LEFT -> if (side == ActionSide.LEFT) listOf(
+                specCursorLeft(), specCursorRight(), specSpace(), specBackspace(), specEnter()
+            ) else emptyList()
 
-            ActionPlacement.TOP -> {
-                if (side == ActionSide.TOP) {
-                    listOf(
-                        specCursorLeft(widthWeight = 0.9f),
-                        specCursorRight(widthWeight = 0.9f),
-                        specSpace(widthWeight = 2.0f),
-                        specBackspace(widthWeight = 1.0f),
-                        specEnter(widthWeight = 1.1f),
-                    )
-                } else emptyList()
-            }
+            ActionPlacement.TOP -> if (side == ActionSide.TOP) listOf(
+                specCursorLeft(widthWeight = 0.9f),
+                specCursorRight(widthWeight = 0.9f),
+                specSpace(widthWeight = 2.0f),
+                specBackspace(widthWeight = 1.0f),
+                specEnter(widthWeight = 1.1f),
+            ) else emptyList()
 
-            ActionPlacement.BOTTOM -> {
-                if (side == ActionSide.BOTTOM) {
-                    listOf(
-                        specCursorLeft(widthWeight = 0.9f),
-                        specCursorRight(widthWeight = 0.9f),
-                        specSpace(widthWeight = 2.0f),
-                        specBackspace(widthWeight = 1.0f),
-                        specEnter(widthWeight = 1.1f),
-                    )
-                } else emptyList()
-            }
+            ActionPlacement.BOTTOM -> if (side == ActionSide.BOTTOM) listOf(
+                specCursorLeft(widthWeight = 0.9f),
+                specCursorRight(widthWeight = 0.9f),
+                specSpace(widthWeight = 2.0f),
+                specBackspace(widthWeight = 1.0f),
+                specEnter(widthWeight = 1.1f),
+            ) else emptyList()
 
-            ActionPlacement.LEFT_RIGHT -> {
-                // 横画面想定: 左にカーソル、右に space/⌫/return（例）
-                when (side) {
-                    ActionSide.LEFT -> listOf(specCursorLeft(), specCursorRight())
-                    ActionSide.RIGHT -> listOf(specSpace(), specBackspace(), specEnter())
-                    else -> emptyList()
-                }
+            ActionPlacement.LEFT_RIGHT -> when (side) {
+                ActionSide.LEFT -> listOf(specCursorLeft(), specCursorRight())
+                ActionSide.RIGHT -> listOf(specSpace(), specBackspace(), specEnter())
+                else -> emptyList()
             }
         }
     }
 
-    // -------------------------
-    // UI build
-    // -------------------------
-
     override fun createView(context: Context): View {
         val mode = currentLayoutMode(context)
 
-        val root = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
+        // ✅ overlay host
+        val host = FrameLayout(context).apply {
             layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        }
+
+        val overlayController = FlickGuideController(host)
+
+        val contentRoot = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
@@ -159,31 +105,30 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin {
             background = keyboardBackground(context)
         }
 
-        val grid = buildMainGrid(context)
+        val grid = buildMainGrid(context, overlayController)
 
         when (val placement = placementFor(mode)) {
             ActionPlacement.TOP -> {
                 val topRow =
                     buildActionRowHorizontal(context, actionButtonsFor(ActionSide.TOP, mode))
-                root.addView(topRow)
-                root.addView(
+                contentRoot.addView(topRow)
+                contentRoot.addView(
                     grid,
                     LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0)
                         .apply { weight = 1f })
             }
 
             ActionPlacement.BOTTOM -> {
-                root.addView(
+                contentRoot.addView(
                     grid,
                     LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0)
                         .apply { weight = 1f })
                 val bottomRow =
                     buildActionRowHorizontal(context, actionButtonsFor(ActionSide.BOTTOM, mode))
-                root.addView(bottomRow)
+                contentRoot.addView(bottomRow)
             }
 
             ActionPlacement.LEFT, ActionPlacement.RIGHT, ActionPlacement.LEFT_RIGHT -> {
-                // 横並び: [LEFT action] [grid] [RIGHT action]
                 val row = LinearLayout(context).apply {
                     orientation = LinearLayout.HORIZONTAL
                     layoutParams = LinearLayout.LayoutParams(
@@ -201,8 +146,7 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin {
                 row.addView(
                     grid,
                     LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT)
-                        .apply { weight = 1f }
-                )
+                        .apply { weight = 1f })
 
                 if (placement == ActionPlacement.RIGHT || placement == ActionPlacement.LEFT_RIGHT) {
                     val rightCol =
@@ -210,11 +154,12 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin {
                     if (rightCol != null) row.addView(rightCol)
                 }
 
-                root.addView(row)
+                contentRoot.addView(row)
             }
         }
 
-        return root
+        host.addView(contentRoot)
+        return host
     }
 
     private fun currentLayoutMode(context: Context): LayoutMode {
@@ -222,39 +167,37 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin {
         return if (o == Configuration.ORIENTATION_LANDSCAPE) LayoutMode.HORIZONTAL else LayoutMode.VERTICAL
     }
 
-    // -------------------------
-    // Main grid (12 keys)
-    // -------------------------
-
-    private fun buildMainGrid(context: Context): View {
+    private fun buildMainGrid(context: Context, overlay: FlickGuideController): View {
+        val (rows, cols) = gridSize(context)
         val grid = GridLayout(context).apply {
-            rowCount = 4
-            columnCount = 3
+            rowCount = rows
+            columnCount = cols
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
             setPadding(dp(context, 8), dp(context, 8), dp(context, 8), dp(context, 8))
+
+            // ✅ 2本指対応（別キーに別ストリームを流す）
+            isMotionEventSplittingEnabled = true
         }
 
-        val keys: List<Pair<String, String>> = listOf(
-            "あ" to "あ", "か" to "か", "さ" to "さ",
-            "た" to "た", "な" to "な", "は" to "は",
-            "ま" to "ま", "や" to "や", "ら" to "ら",
-            "わ" to "わ", "、" to "、", "。" to "。"
-        )
+        val specs = keySpecs(context)
+        specs.forEach { spec ->
+            val b = keyButton(context, spec.label)
 
-        keys.forEachIndexed { idx, (label, commit) ->
-            val r = idx / 3
-            val c = idx % 3
+            // overlay wiring
+            b.guideController = overlay
+            b.guideSpec = spec.toGuideSpec()
 
-            val b = keyButton(context, label) {
-                dispatch?.invoke(KeyboardAction.InputText(commit))
+            b.onGestureResolved = { gesture ->
+                val out = spec.outputs[gesture] ?: KeyOutput.Noop
+                dispatchKeyOutput(out)
             }
 
             val lp = GridLayout.LayoutParams().apply {
-                rowSpec = GridLayout.spec(r, 1f)
-                columnSpec = GridLayout.spec(c, 1f)
+                rowSpec = GridLayout.spec(spec.row, spec.rowSpan, 1f)
+                columnSpec = GridLayout.spec(spec.col, spec.colSpan, 1f)
                 width = 0
                 height = 0
                 setMargins(dp(context, 8), dp(context, 8), dp(context, 8), dp(context, 8))
@@ -265,9 +208,17 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin {
         return grid
     }
 
-    // -------------------------
-    // Action area builders
-    // -------------------------
+    protected open fun gridSize(context: Context): Pair<Int, Int> = 4 to 3
+    protected open fun keySpecs(context: Context): List<KeySpec> = emptyList()
+
+    private fun dispatchKeyOutput(out: KeyOutput) {
+        when (out) {
+            is KeyOutput.Text -> dispatch?.invoke(KeyboardAction.InputText(out.text))
+            is KeyOutput.Action -> dispatch?.invoke(out.action)
+            is KeyOutput.Raw -> dispatch?.invoke(KeyboardAction.Raw(out.raw))
+            KeyOutput.Noop -> dispatch?.invoke(KeyboardAction.Noop)
+        }
+    }
 
     private fun buildActionRowHorizontal(context: Context, specs: List<ActionButtonSpec>): View? {
         if (specs.isEmpty()) return null
@@ -322,10 +273,6 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin {
         return col
     }
 
-    // -------------------------
-    // Default action specs (overrideしなくても組める)
-    // -------------------------
-
     protected fun specCursorLeft(widthWeight: Float = 1f) =
         ActionButtonSpec("←", KeyboardAction.MoveCursor(dx = -1), widthWeight = widthWeight)
 
@@ -341,48 +288,43 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin {
     protected fun specEnter(widthWeight: Float = 1f) =
         ActionButtonSpec("return", KeyboardAction.Enter, widthWeight = widthWeight)
 
-    // -------------------------
-    // Styling (iOS-ish)
-    // -------------------------
-
     private fun keyboardBackground(context: Context): GradientDrawable {
         return GradientDrawable().apply {
             cornerRadius = dp(context, 14).toFloat()
-            setColor(Color.parseColor("#FF1C1C1E")) // iOS dark-ish
+            setColor(Color.parseColor("#FF1C1C1E"))
         }
     }
 
-    private fun keyButton(context: Context, text: String, onClick: () -> Unit): Button {
-        return Button(context).apply {
+    private fun keyButton(context: Context, text: String): GestureKeyButton {
+        return GestureKeyButton(context).apply {
             this.text = text
             isAllCaps = false
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
             setTextColor(Color.BLACK)
             gravity = Gravity.CENTER
-            background = roundedBg(
-                context = context,
-                fill = Color.parseColor("#FFF2F2F7"),
-                stroke = Color.parseColor("#1A000000"),
-                radiusDp = 12
+            TextViewCompat.setAutoSizeTextTypeWithDefaults(
+                this,
+                TextViewCompat.AUTO_SIZE_TEXT_TYPE_NONE
             )
+            background =
+                roundedBg(context, Color.parseColor("#FFF2F2F7"), Color.parseColor("#1A000000"), 12)
             setPadding(dp(context, 8), dp(context, 6), dp(context, 8), dp(context, 6))
-            setOnClickListener { onClick() }
         }
     }
 
-    private fun actionButton(context: Context, text: String, onClick: () -> Unit): Button {
-        return Button(context).apply {
+    private fun actionButton(
+        context: Context,
+        text: String,
+        onClick: () -> Unit
+    ): android.widget.Button {
+        return android.widget.Button(context).apply {
             this.text = text
             isAllCaps = false
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
-            background = roundedBg(
-                context = context,
-                fill = Color.parseColor("#FF2C2C2E"),
-                stroke = Color.parseColor("#26000000"),
-                radiusDp = 12
-            )
+            background =
+                roundedBg(context, Color.parseColor("#FF2C2C2E"), Color.parseColor("#26000000"), 12)
             setPadding(dp(context, 10), dp(context, 6), dp(context, 10), dp(context, 6))
             setOnClickListener { onClick() }
         }
@@ -401,7 +343,50 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin {
         }
     }
 
-    private fun dp(context: Context, v: Int): Int {
-        return (v * context.resources.displayMetrics.density).roundToInt()
+    private fun dp(context: Context, v: Int): Int =
+        (v * context.resources.displayMetrics.density).roundToInt()
+}
+
+/** ---------- guide spec conversion ---------- */
+
+private fun KeySpec.toGuideSpec(): FlickGuideSpec {
+    val normal = FlickGuideSpec.Layer(
+        center = label,
+        up = outputs[KeyGesture.FLICK_UP].toLabelOrNull(),
+        right = outputs[KeyGesture.FLICK_RIGHT].toLabelOrNull(),
+        down = outputs[KeyGesture.FLICK_DOWN].toLabelOrNull(),
+        left = outputs[KeyGesture.FLICK_LEFT].toLabelOrNull(),
+    )
+    val long = FlickGuideSpec.Layer(
+        center = outputs[KeyGesture.LONG_PRESS].toLabelOrNull() ?: label,
+        up = outputs[KeyGesture.LONG_PRESS_FLICK_UP].toLabelOrNull(),
+        right = outputs[KeyGesture.LONG_PRESS_FLICK_RIGHT].toLabelOrNull(),
+        down = outputs[KeyGesture.LONG_PRESS_FLICK_DOWN].toLabelOrNull(),
+        left = outputs[KeyGesture.LONG_PRESS_FLICK_LEFT].toLabelOrNull(),
+    )
+    // long-press layer is meaningful only if any long output exists
+    val hasLong = outputs.keys.any { it.name.startsWith("LONG_PRESS") }
+    return FlickGuideSpec(normal = normal, longPress = if (hasLong) long else null)
+}
+
+private fun KeyOutput?.toLabelOrNull(): String? {
+    return when (this) {
+        is KeyOutput.Text -> this.text
+        is KeyOutput.Action -> when (val a = this.action) {
+            is KeyboardAction.InputText -> a.text
+            KeyboardAction.Space -> "␠"
+            KeyboardAction.Backspace -> "⌫"
+            KeyboardAction.Enter -> "⏎"
+            is KeyboardAction.MoveCursor -> if (a.dx < 0) "←" else "→"
+            else -> null
+        }
+
+        is KeyOutput.Raw -> when (this.raw) {
+            is KeyActionRaw.CommitText -> this.raw.text
+            is KeyActionRaw.SendKeyCode -> "Key"
+            is KeyActionRaw.PerformEditorAction -> "Act"
+        }
+
+        KeyOutput.Noop, null -> null
     }
 }

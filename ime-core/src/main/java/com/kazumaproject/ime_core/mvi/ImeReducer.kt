@@ -64,6 +64,11 @@ object ImeReducer {
                 }
             }
 
+            is KeyboardAction.Raw -> Next(
+                ImeState.Direct,
+                listOf(ImeEffect.PerformRaw(action.raw))
+            )
+
             else -> Next(ImeState.Direct, emptyList())
         }
     }
@@ -232,6 +237,11 @@ object ImeReducer {
                         return Next(ImeState.Direct, eff)
                     }
                 }
+            }
+
+            is KeyboardAction.Raw -> {
+                // Raw actions are applied directly to the editor and do not mutate IME state.
+                s0 to listOf(ImeEffect.PerformRaw(action.raw))
             }
 
             else -> s0 to emptyList()

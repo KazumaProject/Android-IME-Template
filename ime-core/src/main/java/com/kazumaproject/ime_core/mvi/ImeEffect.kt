@@ -20,6 +20,9 @@ sealed interface ImeEffect {
     data object BackspaceInEditor : ImeEffect
     data object PerformEditorEnter : ImeEffect
 
+    /** Execute low-level raw action directly against the editor. */
+    data class PerformRaw(val raw: KeyActionRaw) : ImeEffect
+
     data class RequestCandidates(
         val requestKey: String,
         val bgText: String,

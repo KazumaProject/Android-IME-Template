@@ -114,6 +114,17 @@ class ImeEffectHandler(
                     )
                 }
             }
+
+            is ImeEffect.PerformRaw -> {
+                when (val r = effect.raw) {
+                    is KeyActionRaw.SendKeyCode -> host.sendDownUpKeyEvents(r.keyCode)
+                    is KeyActionRaw.PerformEditorAction -> host.inputConnection()
+                        ?.performEditorAction(r.actionId)
+
+                    is KeyActionRaw.CommitText -> host.inputConnection()
+                        ?.commitText(r.text, 1)
+                }
+            }
         }
     }
 }

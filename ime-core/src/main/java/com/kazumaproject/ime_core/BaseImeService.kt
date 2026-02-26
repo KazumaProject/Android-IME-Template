@@ -13,6 +13,7 @@ import com.kazumaproject.ime_core.mvi.ImeStore
 import com.kazumaproject.ime_core.mvi.KeyboardAction
 import com.kazumaproject.ime_core.plugin.ActionBindablePlugin
 import com.kazumaproject.ime_core.plugin.ImeViewPlugin
+import com.kazumaproject.ime_core.plugin.KanaTwelveKeyPlugin
 import com.kazumaproject.ime_core.plugin.TwelveKeyKeyboardPlugin
 import com.kazumaproject.ime_core.resize.ImeResizeOverlay
 import com.kazumaproject.ime_core.state.CandidateUiMode
@@ -36,7 +37,7 @@ open class BaseImeService : InputMethodService(), ImeHost {
     private var offsetX = 0
     private var offsetY = 0
 
-    protected open fun createPlugin(): ImeViewPlugin = TwelveKeyKeyboardPlugin()
+    protected open fun createPlugin(): ImeViewPlugin = KanaTwelveKeyPlugin()
     protected open fun moveHandleIconResId(): Int? = null
     protected open fun candidatePlacement(): CandidateBarView.Placement =
         CandidateBarView.Placement.TOP

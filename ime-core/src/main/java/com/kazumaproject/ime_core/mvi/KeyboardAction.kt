@@ -8,6 +8,12 @@ sealed class KeyboardAction {
     data object Backspace : KeyboardAction()
     data object Enter : KeyboardAction()
 
+    /**
+     * Low-level actions that should be executed directly against InputConnection/Editor.
+     * Useful for plugins that want to trigger keycodes or editor actions.
+     */
+    data class Raw(val raw: KeyActionRaw) : KeyboardAction()
+
     /** dx: -1/+1, dy: -1/+1 */
     data class MoveCursor(val dx: Int, val dy: Int = 0) : KeyboardAction()
 
