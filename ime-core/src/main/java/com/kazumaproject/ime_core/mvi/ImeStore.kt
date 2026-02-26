@@ -13,7 +13,6 @@ class ImeStore(
 
     fun addListener(listener: (ImeState) -> Unit) {
         listeners.add(listener)
-        // 追加直後に現stateを通知（UI初期化が楽）
         listener(state)
     }
 
@@ -40,7 +39,7 @@ class ImeStore(
     fun clearPreeditIfAny() {
         val s = state
         if (s is ImeState.Precomposition && s.composing.isNotEmpty()) {
-            state = s.copy(composing = "", cursor = 0)
+            state = s.copy(composing = "", splitCursor = 0)
             notifyStateChanged()
             effectHandler.handle(ImeEffect.ClearComposing)
         }

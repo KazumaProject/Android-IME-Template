@@ -65,10 +65,8 @@ open class BaseImeService : InputMethodService(), ImeHost {
         view.setCandidatePlacement(candidatePlacement())
         view.setTopRightButtonsVisible(false)
 
-        // state購読
         store.addListener { s -> renderFromState(s) }
 
-        // Controls callbacks
         view.candidateBar.onClickResize = { toggleResizeMode() }
         view.candidateBar.onClickToggleMode = { toggleImeMode() }
         view.candidateBar.onClickDefaultSize = {
@@ -78,17 +76,14 @@ open class BaseImeService : InputMethodService(), ImeHost {
         }
         view.candidateBar.onClickSettings = { /* hook later */ }
 
-        // ★候補タップ = 決定
+        // ★タップは reducer へ（commit/carry を一元化）
         view.candidateBar.onCandidateClick = { cand ->
             store.dispatch(ImeAction.CandidateChosen(cand))
         }
 
         plugin = createPlugin()
         installPluginView()
-
-        (plugin as? ActionBindablePlugin)?.bind { action ->
-            store.dispatchUi(action)
-        }
+        (plugin as? ActionBindablePlugin)?.bind { action -> store.dispatchUi(action) }
 
         applyFromPrefs()
 
@@ -140,6 +135,7 @@ open class BaseImeService : InputMethodService(), ImeHost {
 
     private fun renderFromState(state: ImeState) {
         val view = ui ?: return
+
         if (state is ImeState.Precomposition) {
             val bgText = state.candidateUi.bgText
             val showSuggestion =
@@ -149,9 +145,7 @@ open class BaseImeService : InputMethodService(), ImeHost {
                 view.candidateBar.setMode(CandidateBarView.Mode.SUGGESTION)
                 view.candidateBar.setLoading(state.candidateUi.isLoading)
                 view.candidateBar.submitCandidates(state.candidateUi.candidates)
-                view.candidateBar.setSelectedIndex(
-                    if (state.candidateUi.selectMode) state.candidateUi.selectedIndex else -1
-                )
+                view.candidateBar.setSelectedIndex(if (state.candidateUi.selectMode) state.candidateUi.selectedIndex else -1)
             } else {
                 view.candidateBar.setMode(CandidateBarView.Mode.CONTROLS)
                 view.candidateBar.setLoading(false)

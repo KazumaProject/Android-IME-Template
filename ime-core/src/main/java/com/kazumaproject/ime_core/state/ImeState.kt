@@ -5,11 +5,14 @@ import com.kazumaproject.ime_core.candidates.Candidate
 sealed interface ImeState {
     data object Direct : ImeState
 
+    /**
+     * splitCursor = bg/ul の境界（見せたいカーソル）
+     * editor selection は動かさない
+     */
     data class Precomposition(
         val composing: String = "",
-        val cursor: Int = 0,
+        val splitCursor: Int = 0,
         val decor: PreeditDecor = PreeditDecor.SplitAtCursor,
-
         val candidateUi: CandidateUiState = CandidateUiState()
     ) : ImeState
 }
@@ -25,9 +28,9 @@ data class CandidateUiState(
     val selectMode: Boolean = false,
     val selectedIndex: Int = -1,
 
-    // preview base (avoid cumulative replace)
+    // Preview base (avoid cumulative replacement)
     val baseComposing: String? = null,
-    val baseCursor: Int = 0
+    val baseSplitCursor: Int = 0
 )
 
 enum class CandidateUiMode { SUGGESTION, CONTROLS }

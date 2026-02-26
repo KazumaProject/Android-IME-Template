@@ -1,5 +1,7 @@
 package com.kazumaproject.ime_core.candidates
 
+import com.kazumaproject.ime_core.extensions.toKatakana
+
 interface CandidateProvider {
     suspend fun suggest(bgText: String, limit: Int = 8): List<Candidate>
 }
@@ -16,7 +18,7 @@ class DefaultCandidateProvider : CandidateProvider {
 
         // 最小のダミー（本番は KanaKanjiConverter 等に差し替える）
         val list = listOf(
-            Candidate(surface = base),
+            Candidate(surface = base.toKatakana()),
             Candidate(surface = "【$base】"),
             Candidate(surface = base.uppercase())
         )

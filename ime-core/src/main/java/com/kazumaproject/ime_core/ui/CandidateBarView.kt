@@ -22,16 +22,13 @@ class CandidateBarView(context: Context) : LinearLayout(context) {
     private var mode: Mode = Mode.CONTROLS
 
     var onCandidateClick: ((Candidate) -> Unit)? = null
-
     var onClickSettings: (() -> Unit)? = null
     var onClickResize: (() -> Unit)? = null
     var onClickToggleMode: (() -> Unit)? = null
     var onClickDefaultSize: (() -> Unit)? = null
 
     private val recycler: RecyclerView
-    private val adapter = CandidateAdapter(
-        onClick = { c -> onCandidateClick?.invoke(c) }
-    )
+    private val adapter = CandidateAdapter { c -> onCandidateClick?.invoke(c) }
 
     private val controlsRow: LinearLayout
     private val loadingText: TextView
@@ -98,6 +95,7 @@ class CandidateBarView(context: Context) : LinearLayout(context) {
             setLoading(false)
             recycler.visibility = View.GONE
             controlsRow.visibility = View.VISIBLE
+            setSelectedIndex(-1)
         }
     }
 
@@ -136,7 +134,6 @@ class CandidateBarView(context: Context) : LinearLayout(context) {
         fun submit(list: List<Candidate>) {
             items.clear()
             items.addAll(list)
-            // 候補更新で選択が範囲外なら解除
             if (selectedIndex !in items.indices) selectedIndex = -1
             notifyDataSetChanged()
         }
@@ -163,7 +160,6 @@ class CandidateBarView(context: Context) : LinearLayout(context) {
             holder.btn.setBackgroundColor(
                 if (isSel) Color.parseColor("#FF3B82F6") else Color.parseColor("#FF1F1F22")
             )
-
             holder.btn.setOnClickListener { onClick(c) }
         }
 

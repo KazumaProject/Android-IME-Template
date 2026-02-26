@@ -3,7 +3,6 @@ package com.kazumaproject.ime_core.mvi
 import com.kazumaproject.ime_core.state.CandidateUiMode
 import com.kazumaproject.ime_core.state.ImeState
 import com.kazumaproject.ime_core.state.PreeditRenderer
-import com.kazumaproject.ime_core.state.Range
 import kotlin.math.abs
 
 object ImeReducer {
@@ -71,73 +70,80 @@ object ImeReducer {
 
     private fun reducePrecomp(s0: ImeState.Precomposition, action: KeyboardAction): Next {
         // -------------------------
-        // 1) Suggestion Select mode
+        // Select mode
         // -------------------------
         if (s0.candidateUi.selectMode) {
             return when (action) {
-
-                // Space: 次候補（wrap）して bg を差し替えてプレビュー
                 KeyboardAction.Space -> {
                     val list = s0.candidateUi.candidates
                     if (list.isEmpty()) return syncCandidateUi(s0, emptyList())
 
-                    val nextIdx =
-                        if (s0.candidateUi.selectedIndex !in list.indices) 0
-                        else (s0.candidateUi.selectedIndex + 1) % list.size
+                    val nextIdx = if (s0.candidateUi.selectedIndex !in list.indices) 0
+                    else (s0.candidateUi.selectedIndex + 1) % list.size
 
-                    val s1 = buildPreviewFromBase(
+                    val s1 = previewCandidateOnBase(
                         s = s0,
                         candidateSurface = list[nextIdx].surface,
                         selectedIndex = nextIdx
                     )
-
-                    // Select中は候補要求しない（チラつき防止）
-                    Next(s1, listOf(ImeEffect.RenderPreedit(s1.composing, s1.cursor, s1.decor)))
+                    Next(
+                        s1,
+                        listOf(ImeEffect.RenderPreedit(s1.composing, s1.splitCursor, s1.decor))
+                    )
                 }
 
-                // ★ Enter: 「確定」= bg部分をcommitし、ulがあれば次preeditとして残してbgに移す
+                // ★ Delete/Backspace: bg を元に戻して Select 解除
+                KeyboardAction.Backspace -> {
+                    val restored = restoreFromBaseAndExitSelect(s0)
+                    syncCandidateUi(
+                        restored,
+                        listOf(
+                            ImeEffect.RenderPreedit(
+                                restored.composing,
+                                restored.splitCursor,
+                                restored.decor
+                            )
+                        )
+                    )
+                }
+
+                // ★ MoveCursor: まず元に戻して Select解除 → その上で通常の MoveCursor を実行
+                is KeyboardAction.MoveCursor -> {
+                    val restored = restoreFromBaseAndExitSelect(s0)
+                    // restored は selectMode=false なので、通常分岐に入る
+                    reducePrecomp(restored, action)
+                }
+
+                // ★確定（Enter）: commit(bg) + ulを次preeditとして残す（全文をbgにしない）
                 KeyboardAction.Enter -> {
                     val list = s0.candidateUi.candidates
                     if (list.isEmpty()) return syncCandidateUi(s0, emptyList())
 
                     val idx = s0.candidateUi.selectedIndex.coerceIn(0, list.lastIndex)
-                    val out = commitBgAndKeepUlAsNextPreedit(
-                        s = s0,
-                        candidateSurface = list[idx].surface
-                    )
-                    out
+                    commitBgAndCarryUl(s = s0, candidateSurface = list[idx].surface)
                 }
 
                 else -> {
-                    // Select解除して通常処理へ
-                    val s1 = s0.copy(
-                        candidateUi = s0.candidateUi.copy(
-                            selectMode = false,
-                            selectedIndex = -1,
-                            baseComposing = null,
-                            baseCursor = 0
-                        )
-                    )
-                    reducePrecomp(s1, action)
+                    val restored = restoreFromBaseAndExitSelect(s0)
+                    reducePrecomp(restored, action)
                 }
             }
         }
 
         // -------------------------
-        // 2) Normal preedit
+        // Normal preedit
         // -------------------------
         val (s1, effects1) = when (action) {
-
             is KeyboardAction.InputText -> {
-                val r = insert(s0.composing, s0.cursor, action.text)
-                val s = s0.copy(composing = r.text, cursor = r.newCursor)
-                s to listOf(ImeEffect.RenderPreedit(s.composing, s.cursor, s.decor))
+                val newText = s0.composing + action.text
+                val s = s0.copy(composing = newText, splitCursor = newText.length)
+                s to listOf(ImeEffect.RenderPreedit(s.composing, s.splitCursor, s.decor))
             }
 
-            // Space: 候補があるなら Select mode / なければスペース挿入
             KeyboardAction.Space -> {
                 val canEnterSelect =
                     s0.candidateUi.bgText.isNotBlank() && s0.candidateUi.candidates.isNotEmpty()
+
                 if (canEnterSelect) {
                     val idx0 = 0
                     val sEnter = s0.copy(
@@ -145,10 +151,10 @@ object ImeReducer {
                             selectMode = true,
                             selectedIndex = idx0,
                             baseComposing = s0.composing,
-                            baseCursor = s0.cursor
+                            baseSplitCursor = s0.splitCursor
                         )
                     )
-                    val sPreview = buildPreviewFromBase(
+                    val sPreview = previewCandidateOnBase(
                         s = sEnter,
                         candidateSurface = sEnter.candidateUi.candidates[idx0].surface,
                         selectedIndex = idx0
@@ -156,32 +162,34 @@ object ImeReducer {
                     sPreview to listOf(
                         ImeEffect.RenderPreedit(
                             sPreview.composing,
-                            sPreview.cursor,
+                            sPreview.splitCursor,
                             sPreview.decor
                         )
                     )
                 } else {
-                    val r = insert(s0.composing, s0.cursor, " ")
-                    val s = s0.copy(composing = r.text, cursor = r.newCursor)
-                    s to listOf(ImeEffect.RenderPreedit(s.composing, s.cursor, s.decor))
+                    val newText = s0.composing + " "
+                    val s = s0.copy(composing = newText, splitCursor = newText.length)
+                    s to listOf(ImeEffect.RenderPreedit(s.composing, s.splitCursor, s.decor))
                 }
             }
 
             KeyboardAction.Backspace -> {
-                if (s0.composing.isEmpty() || s0.cursor <= 0) {
+                if (s0.composing.isEmpty()) {
                     s0 to listOf(ImeEffect.BackspaceInEditor)
                 } else {
-                    val r = deleteBeforeCursor(s0.composing, s0.cursor)
-                    val s = s0.copy(composing = r.text, cursor = r.newCursor)
-                    val eff = if (s.composing.isEmpty()) listOf(ImeEffect.ClearComposing)
-                    else listOf(ImeEffect.RenderPreedit(s.composing, s.cursor, s.decor))
+                    val newText = s0.composing.dropLast(1)
+                    val newSplit = s0.splitCursor.coerceAtMost(newText.length)
+                    val s = s0.copy(composing = newText, splitCursor = newSplit)
+                    val eff =
+                        if (newText.isEmpty()) listOf(ImeEffect.ClearComposing)
+                        else listOf(ImeEffect.RenderPreedit(s.composing, s.splitCursor, s.decor))
                     s to eff
                 }
             }
 
             KeyboardAction.Enter -> {
                 if (s0.composing.isNotEmpty()) {
-                    val s = s0.copy(composing = "", cursor = 0)
+                    val s = s0.copy(composing = "", splitCursor = 0)
                     s to listOf(ImeEffect.CommitText(s0.composing), ImeEffect.ClearComposing)
                 } else {
                     s0 to listOf(ImeEffect.PerformEditorEnter)
@@ -189,9 +197,28 @@ object ImeReducer {
             }
 
             is KeyboardAction.MoveCursor -> {
-                val len = s0.composing.length
-                val s = s0.copy(cursor = (s0.cursor + action.dx).coerceIn(0, len))
-                s to listOf(ImeEffect.RenderPreedit(s.composing, s.cursor, s.decor))
+                // ★ Preeditに文字が無いなら editor 側を動かす（Direct同等）
+                if (s0.composing.isEmpty()) {
+                    val effects = buildList {
+                        if (action.dx != 0) add(
+                            ImeEffect.SendDpad(
+                                if (action.dx < 0) DpadDirection.LEFT else DpadDirection.RIGHT,
+                                abs(action.dx)
+                            )
+                        )
+                        if (action.dy != 0) add(
+                            ImeEffect.SendDpad(
+                                if (action.dy < 0) DpadDirection.UP else DpadDirection.DOWN,
+                                abs(action.dy)
+                            )
+                        )
+                    }
+                    s0 to effects
+                } else {
+                    val len = s0.composing.length
+                    val s = s0.copy(splitCursor = (s0.splitCursor + action.dx).coerceIn(0, len))
+                    s to listOf(ImeEffect.RenderPreedit(s.composing, s.splitCursor, s.decor))
+                }
             }
 
             is KeyboardAction.SetCompositionMode -> {
@@ -213,15 +240,13 @@ object ImeReducer {
         return syncCandidateUi(s1, effects1)
     }
 
-    // ★ 候補タップも Select Enter と同じ「確定」挙動（bgをcommit / ulを次preeditに残す）
     private fun reduceCandidateChosen(
         state: ImeState,
         candidate: com.kazumaproject.ime_core.candidates.Candidate
     ): Next {
         val s0 = state as? ImeState.Precomposition ?: return Next(state, emptyList())
         if (s0.candidateUi.bgText.isBlank()) return Next(state, emptyList())
-
-        return commitBgAndKeepUlAsNextPreedit(s0, candidate.surface)
+        return commitBgAndCarryUl(s0, candidate.surface)
     }
 
     private fun reduceCandidatesLoaded(state: ImeState, action: ImeAction.CandidatesLoaded): Next {
@@ -238,9 +263,6 @@ object ImeReducer {
         return Next(s1, emptyList())
     }
 
-    /**
-     * Candidate UI同期（select中は呼び出し側で回避しているが保険でreturn）
-     */
     private fun syncCandidateUi(s0: ImeState.Precomposition, baseEffects: List<ImeEffect>): Next {
         if (s0.candidateUi.selectMode) return Next(s0, baseEffects)
 
@@ -259,7 +281,7 @@ object ImeReducer {
             return Next(s1, baseEffects)
         }
 
-        val key = makeRequestKey(bgText, s0.composing.length, s0.cursor)
+        val key = makeRequestKey(bgText, s0.composing.length, s0.splitCursor)
         val already = (s0.candidateUi.requestKey == key && s0.candidateUi.bgText == bgText)
 
         val s1 = s0.copy(
@@ -279,130 +301,119 @@ object ImeReducer {
 
     private fun extractBgTextOrNull(s: ImeState.Precomposition): String? {
         if (s.composing.isEmpty()) return null
-        val ranges = PreeditRenderer.computeRanges(s.composing.length, s.cursor, s.decor)
+        val ranges = PreeditRenderer.computeRanges(s.composing.length, s.splitCursor, s.decor)
         val bg = ranges.bg.clamp(s.composing.length)
         if (bg.isEmpty()) return null
         return runCatching { s.composing.substring(bg.start, bg.endExclusive) }.getOrNull()
     }
 
-    private fun bgRange(s: ImeState.Precomposition, text: String, cursor: Int): Range {
-        val ranges = PreeditRenderer.computeRanges(text.length, cursor, s.decor)
-        return ranges.bg.clamp(text.length)
+    private fun rangesFor(
+        text: String,
+        split: Int,
+        decor: com.kazumaproject.ime_core.state.PreeditDecor
+    ): PreeditRenderer.ComputedRanges {
+        return PreeditRenderer.computeRanges(text.length, split.coerceIn(0, text.length), decor)
     }
 
-    /**
-     * baseComposing/baseCursor を基準に bg を candidateSurface に差し替えてプレビュー。
-     */
-    private fun buildPreviewFromBase(
+    private fun previewCandidateOnBase(
         s: ImeState.Precomposition,
         candidateSurface: String,
         selectedIndex: Int
     ): ImeState.Precomposition {
         val baseText = s.candidateUi.baseComposing ?: s.composing
-        val baseCursor = s.candidateUi.baseCursor.coerceIn(0, baseText.length)
+        val baseSplit =
+            (if (s.candidateUi.baseComposing != null) s.candidateUi.baseSplitCursor else s.splitCursor)
+                .coerceIn(0, baseText.length)
 
-        val bg = bgRange(s, baseText, baseCursor)
+        val ranges = rangesFor(baseText, baseSplit, s.decor)
+        val bg = ranges.bg.clamp(baseText.length)
         if (bg.isEmpty()) return s
 
         val replaced = StringBuilder(baseText).apply {
             replace(bg.start, bg.endExclusive, candidateSurface)
         }.toString()
 
-        val newCursor = (bg.start + candidateSurface.length).coerceIn(0, replaced.length)
+        val newSplit = (bg.start + candidateSurface.length).coerceIn(0, replaced.length)
 
         return s.copy(
             composing = replaced,
-            cursor = newCursor,
+            splitCursor = newSplit,
             candidateUi = s.candidateUi.copy(
                 selectedIndex = selectedIndex,
                 baseComposing = baseText,
-                baseCursor = baseCursor
+                baseSplitCursor = baseSplit
             )
         )
     }
 
-    /**
-     * ★今回の本質:
-     * - bg部分（候補）を Editor に commit して「確定」
-     * - ul部分が残っているなら、それを “次の preedit” として残す
-     *   その際 cursor を末尾にして (SplitAtCursorなら) ul→bg に移った状態にする
-     *
-     * 重要: ここでは「元の preedit 全文を bg にする」ことはしない。
-     */
-    private fun commitBgAndKeepUlAsNextPreedit(
+    private fun commitBgAndCarryUl(
         s: ImeState.Precomposition,
         candidateSurface: String
     ): Next {
         val baseText = s.candidateUi.baseComposing ?: s.composing
-        val baseCursor =
-            (if (s.candidateUi.baseComposing != null) s.candidateUi.baseCursor else s.cursor)
+        val baseSplit =
+            (if (s.candidateUi.baseComposing != null) s.candidateUi.baseSplitCursor else s.splitCursor)
                 .coerceIn(0, baseText.length)
 
-        val bg = bgRange(s, baseText, baseCursor)
+        val ranges = rangesFor(baseText, baseSplit, s.decor)
+        val bg = ranges.bg.clamp(baseText.length)
+        val ul = ranges.ul.clamp(baseText.length)
+
         if (bg.isEmpty()) {
-            // bgが空なら何もしない
-            return Next(s, emptyList())
+            val s1 = restoreFromBaseAndExitSelect(s)
+            return Next(s1, emptyList())
         }
 
-        // ul = bgの後ろ（SplitAtCursor 前提の自然な挙動）
-        val ulText = if (bg.endExclusive < baseText.length) {
-            baseText.substring(bg.endExclusive)
-        } else {
-            ""
-        }
-
+        val ulText = if (!ul.isEmpty()) baseText.substring(ul.start, ul.endExclusive) else ""
         val nextComposing = ulText
-        val nextCursor = nextComposing.length // ul→bg（次preeditでは全部bgになる）
+        val nextSplit = nextComposing.length
 
         val s1 = s.copy(
             composing = nextComposing,
-            cursor = nextCursor,
+            splitCursor = nextSplit,
             candidateUi = s.candidateUi.copy(
                 selectMode = false,
                 selectedIndex = -1,
                 baseComposing = null,
-                baseCursor = 0
+                baseSplitCursor = 0
             )
         )
 
-        // 1) まず候補をcommitして確定
-        // 2) その後、残りがあれば preedit を再描画（なければ ClearComposing）
         val effects = buildList {
             add(ImeEffect.CommitText(candidateSurface))
-
-            if (nextComposing.isEmpty()) {
-                add(ImeEffect.ClearComposing)
-            } else {
-                // composing表示を新しい残りに差し替える
-                add(ImeEffect.RenderPreedit(s1.composing, s1.cursor, s1.decor))
-            }
+            if (nextComposing.isEmpty()) add(ImeEffect.ClearComposing)
+            else add(ImeEffect.RenderPreedit(s1.composing, s1.splitCursor, s1.decor))
         }
 
         return syncCandidateUi(s1, effects)
     }
 
-    private fun makeRequestKey(bgText: String, len: Int, cursor: Int): String =
-        "$bgText#$len#$cursor"
+    private fun restoreFromBaseAndExitSelect(s0: ImeState.Precomposition): ImeState.Precomposition {
+        val baseText = s0.candidateUi.baseComposing
+        val baseSplit = s0.candidateUi.baseSplitCursor
 
-    private data class TextEditResult(val text: String, val newCursor: Int)
-
-    private fun insert(text: String, cursor: Int, ins: String): TextEditResult {
-        val c = cursor.coerceIn(0, text.length)
-        val out = StringBuilder(text.length + ins.length)
-            .append(text.substring(0, c))
-            .append(ins)
-            .append(text.substring(c))
-            .toString()
-        return TextEditResult(out, c + ins.length)
+        return if (baseText != null) {
+            s0.copy(
+                composing = baseText,
+                splitCursor = baseSplit.coerceIn(0, baseText.length),
+                candidateUi = s0.candidateUi.copy(
+                    selectMode = false,
+                    selectedIndex = -1,
+                    baseComposing = null,
+                    baseSplitCursor = 0
+                )
+            )
+        } else {
+            s0.copy(
+                candidateUi = s0.candidateUi.copy(
+                    selectMode = false,
+                    selectedIndex = -1,
+                    baseComposing = null,
+                    baseSplitCursor = 0
+                )
+            )
+        }
     }
 
-    private fun deleteBeforeCursor(text: String, cursor: Int): TextEditResult {
-        val c = cursor.coerceIn(0, text.length)
-        if (c == 0) return TextEditResult(text, 0)
-        val out = StringBuilder(text.length - 1)
-            .append(text.substring(0, c - 1))
-            .append(text.substring(c))
-            .toString()
-        return TextEditResult(out, c - 1)
-    }
+    private fun makeRequestKey(bgText: String, len: Int, split: Int): String = "$bgText#$len#$split"
 }

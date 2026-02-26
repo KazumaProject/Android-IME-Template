@@ -2,11 +2,10 @@ package com.kazumaproject.ime_core.mvi
 
 import android.view.KeyEvent
 import android.view.inputmethod.EditorInfo
-import android.view.inputmethod.ExtractedTextRequest
 import android.view.inputmethod.InputConnection
 import com.kazumaproject.ime_core.candidates.CandidateProvider
-import com.kazumaproject.ime_core.state.PreeditDecor
-import com.kazumaproject.ime_core.state.PreeditRenderer
+import com.kazumaproject.ime_core.state.ComposingApplier
+import com.kazumaproject.ime_core.state.ImeState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -47,7 +46,14 @@ class ImeEffectHandler(
 
             is ImeEffect.RenderPreedit -> {
                 val ic = host.inputConnection() ?: return
-                applyPreedit(ic, effect.composing, effect.cursor, effect.decor)
+                ComposingApplier.applyPrecomposition(
+                    ic = ic,
+                    state = ImeState.Precomposition(
+                        composing = effect.composing,
+                        splitCursor = effect.splitCursor,
+                        decor = effect.decor
+                    )
+                )
             }
 
             is ImeEffect.SendDpad -> {
@@ -80,7 +86,6 @@ class ImeEffectHandler(
             }
 
             is ImeEffect.RequestCandidates -> {
-                // bgText が空なら即空で返す（UIの整合性）
                 if (effect.bgText.isBlank()) {
                     dispatchInternal(
                         ImeAction.CandidatesLoaded(
@@ -91,7 +96,6 @@ class ImeEffectHandler(
                     )
                     return
                 }
-
                 scope.launch {
                     val list = withContext(Dispatchers.Default) {
                         runCatching {
@@ -110,39 +114,6 @@ class ImeEffectHandler(
                     )
                 }
             }
-        }
-    }
-
-    private fun applyPreedit(
-        ic: InputConnection,
-        composing: String,
-        cursor: Int,
-        decor: PreeditDecor
-    ) {
-        val len = composing.length
-        if (len == 0) {
-            ic.setComposingText("", 1)
-            ic.finishComposingText()
-            return
-        }
-
-        val ranges = PreeditRenderer.computeRanges(len, cursor, decor)
-        val spannable = PreeditRenderer.buildSpannable(composing, ranges)
-
-        ic.setComposingText(spannable, 1)
-
-        val req = ExtractedTextRequest().apply {
-            token = 0; flags = 0; hintMaxChars = 0; hintMaxLines = 0
-        }
-        val extracted = ic.getExtractedText(req, 0)
-        val cur = cursor.coerceIn(0, len)
-
-        if (extracted != null) {
-            val composingStart = extracted.selectionEnd - len
-            val desiredAbs = composingStart + cur
-            ic.setSelection(desiredAbs, desiredAbs)
-        } else {
-            ic.setComposingText(spannable, cur - len)
         }
     }
 }
