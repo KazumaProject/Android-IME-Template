@@ -13,8 +13,6 @@ class KanaTwelveKeyPlugin : TwelveKeyKeyboardPlugin() {
         mode: LayoutMode
     ): List<ActionColumnItem> {
         val placement = placementFor(mode)
-
-        // TOP/BOTTOM は従来の横並びでOK
         if (placement == ActionPlacement.TOP || placement == ActionPlacement.BOTTOM) {
             return super.actionColumnItems(side, mode)
         }
@@ -23,29 +21,17 @@ class KanaTwelveKeyPlugin : TwelveKeyKeyboardPlugin() {
             ActionPlacement.RIGHT -> {
                 if (side != ActionSide.RIGHT) return emptyList()
                 listOf(
-                    ActionColumnItem.Single(
-                        specBackspace(),
-                        weight = 1f
-                    ),                           // 1
-                    ActionColumnItem.Row(
-                        listOf(specCursorLeft(), specCursorRight()),
-                        weight = 1f
-                    ), // 1
-                    ActionColumnItem.Single(
-                        specSpace(),
-                        weight = 1f
-                    ),                               // 1
-                    ActionColumnItem.Single(
-                        specEnter(),
-                        weight = 2f
-                    ),                               // 2 (4-5行目相当)
+                    ActionColumnItem.Single(specBackspaceRepeat(), weight = 1f),
+                    ActionColumnItem.Row(listOf(specCursorLeft(), specCursorRight()), weight = 1f),
+                    ActionColumnItem.Single(specSpace(), weight = 1f),
+                    ActionColumnItem.Single(specEnter(), weight = 2f),
                 )
             }
 
             ActionPlacement.LEFT -> {
                 if (side != ActionSide.LEFT) return emptyList()
                 listOf(
-                    ActionColumnItem.Single(specBackspace(), weight = 1f),
+                    ActionColumnItem.Single(specBackspaceRepeat(), weight = 1f),
                     ActionColumnItem.Row(listOf(specCursorLeft(), specCursorRight()), weight = 1f),
                     ActionColumnItem.Single(specSpace(), weight = 1f),
                     ActionColumnItem.Single(specEnter(), weight = 2f),
@@ -55,7 +41,7 @@ class KanaTwelveKeyPlugin : TwelveKeyKeyboardPlugin() {
             ActionPlacement.LEFT_RIGHT -> {
                 when (side) {
                     ActionSide.LEFT -> listOf(
-                        ActionColumnItem.Single(specBackspace(), weight = 1f),
+                        ActionColumnItem.Single(specBackspaceRepeat(), weight = 1f),
                         ActionColumnItem.Row(
                             listOf(specCursorLeft(), specCursorRight()),
                             weight = 1f

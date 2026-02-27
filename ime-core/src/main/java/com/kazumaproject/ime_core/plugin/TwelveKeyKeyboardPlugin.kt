@@ -6,8 +6,8 @@ import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.util.TypedValue
 import android.view.Gravity
-import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.GridLayout
@@ -24,7 +24,9 @@ import kotlin.math.roundToInt
 open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
     OverlayHostBindablePlugin {
 
-    private var dispatch: ((KeyboardAction) -> Unit)? = null
+    protected var dispatch: ((KeyboardAction) -> Unit)? = null
+        private set
+
     override fun bind(dispatch: (KeyboardAction) -> Unit) {
         this.dispatch = dispatch
     }
@@ -34,11 +36,6 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
     override fun bindOverlayHost(overlayHost: FrameLayout) {
         externalOverlayHost = overlayHost
     }
-
-    // ✅ 押下中キーを開始順に保持（= 1本目が先頭）
-    private val activeKeys: LinkedHashSet<GestureKeyView> = LinkedHashSet()
-
-    // ---- dynamic layout params ----
 
     private var keyMarginDpOverride: Int? = null
     fun setKeyMarginDpOverride(dp: Int?) {
@@ -54,7 +51,10 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
 
     data class ActionButtonSpec(
         val label: String,
-        val action: KeyboardAction,
+        val outputs: Map<KeyGesture, KeyboardAction>,
+        val repeatAction: KeyboardAction? = null,
+        val repeatStartDelayMs: Long? = null,
+        val repeatIntervalMs: Long? = null,
         val widthWeight: Float = 1f,
         val heightDp: Int = 44
     )
@@ -79,18 +79,18 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
     ): List<ActionButtonSpec> {
         return when (placementFor(mode)) {
             ActionPlacement.RIGHT -> if (side == ActionSide.RIGHT) listOf(
-                specCursorLeft(), specCursorRight(), specSpace(), specBackspace(), specEnter()
+                specCursorLeft(), specCursorRight(), specSpace(), specBackspaceRepeat(), specEnter()
             ) else emptyList()
 
             ActionPlacement.LEFT -> if (side == ActionSide.LEFT) listOf(
-                specCursorLeft(), specCursorRight(), specSpace(), specBackspace(), specEnter()
+                specCursorLeft(), specCursorRight(), specSpace(), specBackspaceRepeat(), specEnter()
             ) else emptyList()
 
             ActionPlacement.TOP -> if (side == ActionSide.TOP) listOf(
                 specCursorLeft(widthWeight = 0.9f),
                 specCursorRight(widthWeight = 0.9f),
                 specSpace(widthWeight = 2.0f),
-                specBackspace(widthWeight = 1.0f),
+                specBackspaceRepeat(widthWeight = 1.0f),
                 specEnter(widthWeight = 1.1f),
             ) else emptyList()
 
@@ -98,13 +98,13 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
                 specCursorLeft(widthWeight = 0.9f),
                 specCursorRight(widthWeight = 0.9f),
                 specSpace(widthWeight = 2.0f),
-                specBackspace(widthWeight = 1.0f),
+                specBackspaceRepeat(widthWeight = 1.0f),
                 specEnter(widthWeight = 1.1f),
             ) else emptyList()
 
             ActionPlacement.LEFT_RIGHT -> when (side) {
                 ActionSide.LEFT -> listOf(specCursorLeft(), specCursorRight())
-                ActionSide.RIGHT -> listOf(specSpace(), specBackspace(), specEnter())
+                ActionSide.RIGHT -> listOf(specSpace(), specBackspaceRepeat(), specEnter())
                 else -> emptyList()
             }
         }
@@ -121,16 +121,11 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
     override fun createView(context: Context): View {
         val mode = currentLayoutMode(context)
 
-        // ✅ 子に配られる前に必ずイベントを監視できる FrameLayout
-        val pluginHost = TouchRouterFrameLayout(context).apply {
+        val pluginHost = FrameLayout(context).apply {
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
-            onPointerDown = {
-                // 2本目が来た瞬間に 1本目（開始順先頭）を確定
-                activeKeys.firstOrNull()?.forceCommitFromExternal()
-            }
         }
 
         val overlayHost = externalOverlayHost ?: pluginHost
@@ -158,16 +153,14 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
                 contentRoot.addView(
                     grid,
                     LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0)
-                        .apply { weight = 1f }
-                )
+                        .apply { weight = 1f })
             }
 
             ActionPlacement.BOTTOM -> {
                 contentRoot.addView(
                     grid,
                     LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0)
-                        .apply { weight = 1f }
-                )
+                        .apply { weight = 1f })
                 val bottomRow =
                     buildActionRowHorizontal(context, actionButtonsFor(ActionSide.BOTTOM, mode))
                 contentRoot.addView(bottomRow)
@@ -191,8 +184,7 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
                 row.addView(
                     grid,
                     LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT)
-                        .apply { weight = 1f }
-                )
+                        .apply { weight = 1f })
 
                 if (placement == ActionPlacement.RIGHT || placement == ActionPlacement.LEFT_RIGHT) {
                     val rightCol = buildActionColumnWeighted(
@@ -239,17 +231,6 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
         keySpecs(context).forEach { spec ->
             val b = keyButton(context, spec.label)
 
-            // ✅ 押下中キー管理
-            b.sessionListener = object : GestureKeyView.TouchSessionListener {
-                override fun onSessionStart(key: GestureKeyView) {
-                    activeKeys.add(key)
-                }
-
-                override fun onSessionEnd(key: GestureKeyView) {
-                    activeKeys.remove(key)
-                }
-            }
-
             b.guideController = overlay
             b.guideOverlayHost = overlayHost
             b.guideSpec = spec.toGuideSpec()
@@ -292,14 +273,12 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply {
-                setMargins(dp(context, 8), dp(context, 8), dp(context, 8), dp(context, 8))
-            }
+            ).apply { setMargins(dp(context, 8), dp(context, 8), dp(context, 8), dp(context, 8)) }
             gravity = Gravity.CENTER_VERTICAL
         }
 
         specs.forEachIndexed { idx, spec ->
-            val btn = actionButton(context, spec.label) { dispatch?.invoke(spec.action) }
+            val btn = actionButton(context, spec)
             row.addView(
                 btn,
                 LinearLayout.LayoutParams(0, dp(context, spec.heightDp)).apply {
@@ -319,9 +298,7 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
             layoutParams = LinearLayout.LayoutParams(
                 dp(context, 72),
                 ViewGroup.LayoutParams.MATCH_PARENT
-            ).apply {
-                setMargins(dp(context, 8), dp(context, 8), dp(context, 8), dp(context, 8))
-            }
+            ).apply { setMargins(dp(context, 8), dp(context, 8), dp(context, 8), dp(context, 8)) }
         }
 
         items.forEach { item ->
@@ -338,10 +315,7 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
                 is ActionColumnItem.Empty -> Unit
 
                 is ActionColumnItem.Single -> {
-                    val btn = actionButton(
-                        context,
-                        item.spec.label
-                    ) { dispatch?.invoke(item.spec.action) }
+                    val btn = actionButton(context, item.spec)
                     rowContainer.addView(
                         btn,
                         LinearLayout.LayoutParams(
@@ -355,8 +329,7 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
                     val specs = item.specs.take(2)
                     if (specs.size == 2) {
                         specs.forEachIndexed { i, spec ->
-                            val btn =
-                                actionButton(context, spec.label) { dispatch?.invoke(spec.action) }
+                            val btn = actionButton(context, spec)
                             rowContainer.addView(
                                 btn,
                                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT)
@@ -368,9 +341,7 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
                             )
                         }
                     } else if (specs.size == 1) {
-                        val spec = specs[0]
-                        val btn =
-                            actionButton(context, spec.label) { dispatch?.invoke(spec.action) }
+                        val btn = actionButton(context, specs[0])
                         rowContainer.addView(
                             btn,
                             LinearLayout.LayoutParams(
@@ -388,20 +359,58 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
         return root
     }
 
-    protected fun specCursorLeft(widthWeight: Float = 1f) =
-        ActionButtonSpec("←", KeyboardAction.MoveCursor(dx = -1), widthWeight = widthWeight)
+    // ---- Specs: repeat for ⌫, ←, → ----
 
-    protected fun specCursorRight(widthWeight: Float = 1f) =
-        ActionButtonSpec("→", KeyboardAction.MoveCursor(dx = +1), widthWeight = widthWeight)
+    protected open fun specCursorLeft(widthWeight: Float = 1f): ActionButtonSpec {
+        val act = KeyboardAction.MoveCursor(dx = -1)
+        return ActionButtonSpec(
+            label = "←",
+            outputs = mapOf(KeyGesture.TAP to act),
+            repeatAction = act,
+            repeatStartDelayMs = 250L,
+            repeatIntervalMs = 35L,
+            widthWeight = widthWeight
+        )
+    }
 
-    protected fun specSpace(widthWeight: Float = 1f) =
-        ActionButtonSpec("space", KeyboardAction.Space, widthWeight = widthWeight)
+    protected open fun specCursorRight(widthWeight: Float = 1f): ActionButtonSpec {
+        val act = KeyboardAction.MoveCursor(dx = +1)
+        return ActionButtonSpec(
+            label = "→",
+            outputs = mapOf(KeyGesture.TAP to act),
+            repeatAction = act,
+            repeatStartDelayMs = 250L,
+            repeatIntervalMs = 35L,
+            widthWeight = widthWeight
+        )
+    }
 
-    protected fun specBackspace(widthWeight: Float = 1f) =
-        ActionButtonSpec("⌫", KeyboardAction.Backspace, widthWeight = widthWeight)
+    protected open fun specSpace(widthWeight: Float = 1f): ActionButtonSpec {
+        return ActionButtonSpec(
+            label = "space",
+            outputs = mapOf(KeyGesture.TAP to KeyboardAction.Space),
+            widthWeight = widthWeight
+        )
+    }
 
-    protected fun specEnter(widthWeight: Float = 1f) =
-        ActionButtonSpec("return", KeyboardAction.Enter, widthWeight = widthWeight)
+    protected open fun specBackspaceRepeat(widthWeight: Float = 1f): ActionButtonSpec {
+        return ActionButtonSpec(
+            label = "⌫",
+            outputs = mapOf(KeyGesture.TAP to KeyboardAction.Backspace),
+            repeatAction = KeyboardAction.Backspace,
+            repeatStartDelayMs = ViewConfiguration.getLongPressTimeout().toLong(),
+            repeatIntervalMs = 45L,
+            widthWeight = widthWeight
+        )
+    }
+
+    protected open fun specEnter(widthWeight: Float = 1f): ActionButtonSpec {
+        return ActionButtonSpec(
+            label = "return",
+            outputs = mapOf(KeyGesture.TAP to KeyboardAction.Enter),
+            widthWeight = widthWeight
+        )
+    }
 
     private fun keyboardBackground(context: Context): GradientDrawable {
         return GradientDrawable().apply {
@@ -414,12 +423,8 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
         return GestureKeyView(context).apply {
             labelText = text
             allowMultiCharCenterLabel = true
-            keyBackgroundDrawable = roundedBg(
-                context,
-                Color.parseColor("#FFF2F2F7"),
-                Color.parseColor("#1A000000"),
-                12
-            )
+            keyBackgroundDrawable =
+                roundedBg(context, Color.parseColor("#FFF2F2F7"), Color.parseColor("#1A000000"), 12)
             showFlickHints = true
             centerTextMaxSp = 26
             centerTextMinSp = 10
@@ -428,13 +433,9 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
         }
     }
 
-    private fun actionButton(
-        context: Context,
-        text: String,
-        onClick: () -> Unit
-    ): android.widget.Button {
-        return android.widget.Button(context).apply {
-            this.text = text
+    private fun actionButton(context: Context, spec: ActionButtonSpec): ActionGestureButton {
+        return ActionGestureButton(context).apply {
+            text = spec.label
             isAllCaps = false
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setTextColor(Color.WHITE)
@@ -442,7 +443,14 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
             background =
                 roundedBg(context, Color.parseColor("#FF2C2C2E"), Color.parseColor("#26000000"), 12)
             setPadding(dp(context, 10), dp(context, 6), dp(context, 10), dp(context, 6))
-            setOnClickListener { onClick() }
+
+            outputs = spec.outputs
+            repeatAction = spec.repeatAction
+            spec.repeatStartDelayMs?.let { repeatStartDelayMs = it }
+            spec.repeatIntervalMs?.let { repeatIntervalMs = it }
+
+            // ✅ IMPORTANT: avoid infinite recursion
+            dispatchAction = { act -> this@TwelveKeyKeyboardPlugin.dispatch?.invoke(act) }
         }
     }
 
@@ -461,20 +469,6 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
 
     private fun dp(context: Context, v: Int): Int =
         (v * context.resources.displayMetrics.density).roundToInt()
-
-    /**
-     * ✅ 子Viewに配られる前に必ず通るので、ここで POINTER_DOWN を確実に検知できる
-     */
-    private class TouchRouterFrameLayout(context: Context) : FrameLayout(context) {
-        var onPointerDown: (() -> Unit)? = null
-
-        override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
-            if (ev.actionMasked == MotionEvent.ACTION_POINTER_DOWN) {
-                onPointerDown?.invoke()
-            }
-            return super.dispatchTouchEvent(ev)
-        }
-    }
 }
 
 /** ---------- guide spec conversion ---------- */
