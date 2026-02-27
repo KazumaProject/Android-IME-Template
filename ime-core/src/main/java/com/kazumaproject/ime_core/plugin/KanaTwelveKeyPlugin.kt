@@ -85,31 +85,31 @@ class KanaTwelveKeyPlugin : TwelveKeyKeyboardPlugin() {
                 "あ",
                 row = 0,
                 col = 0,
-                up = "い",
-                right = "う",
-                down = "え",
-                left = "お",
-                small = "ぁ"
+                up = "う",
+                right = "え",
+                down = "お",
+                left = "い",
+                small = "あ"
             ),
             kanaKey(
                 "か",
                 row = 0,
                 col = 1,
-                up = "き",
-                right = "く",
-                down = "け",
-                left = "こ",
-                small = null
+                up = "く",
+                right = "け",
+                down = "こ",
+                left = "き",
+                small = "か"
             ),
             kanaKey(
                 "さ",
                 row = 0,
                 col = 2,
-                up = "し",
-                right = "す",
-                down = "せ",
-                left = "そ",
-                small = null
+                up = "す",
+                right = "せ",
+                down = "そ",
+                left = "し",
+                small = "さ"
             ),
 
             kanaKey(

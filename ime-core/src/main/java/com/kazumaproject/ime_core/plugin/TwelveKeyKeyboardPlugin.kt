@@ -11,7 +11,6 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.GridLayout
 import android.widget.LinearLayout
-import androidx.core.widget.TextViewCompat
 import com.kazumaproject.ime_core.mvi.KeyActionRaw
 import com.kazumaproject.ime_core.mvi.KeyboardAction
 import com.kazumaproject.ime_core.plugin.twelvekey.model.KeyGesture
@@ -221,7 +220,7 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
                 columnSpec = GridLayout.spec(spec.col, spec.colSpan, 1f)
                 width = 0
                 height = 0
-                setMargins(dp(context, 8), dp(context, 8), dp(context, 8), dp(context, 8))
+                setMargins(dp(context, 4), dp(context, 4), dp(context, 4), dp(context, 4))
             }
             grid.addView(b, lp)
         }
@@ -316,20 +315,31 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
         }
     }
 
-    private fun keyButton(context: Context, text: String): GestureKeyButton {
-        return GestureKeyButton(context).apply {
-            this.text = text
-            isAllCaps = false
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
-            setTextColor(Color.BLACK)
-            gravity = Gravity.CENTER
-            TextViewCompat.setAutoSizeTextTypeWithDefaults(
-                this,
-                TextViewCompat.AUTO_SIZE_TEXT_TYPE_NONE
+    private fun keyButton(context: Context, text: String): GestureKeyView {
+        return GestureKeyView(context).apply {
+            // label
+            labelText = text
+            allowMultiCharCenterLabel = true // ✅ space/return 等もOK
+
+            // styling (旧ボタン相当)
+            // ここは元の roundedBg をそのまま使える前提
+            keyBackgroundDrawable = roundedBg(
+                context,
+                Color.parseColor("#FFF2F2F7"),
+                Color.parseColor("#1A000000"),
+                12
             )
-            background =
-                roundedBg(context, Color.parseColor("#FFF2F2F7"), Color.parseColor("#1A000000"), 12)
-            setPadding(dp(context, 8), dp(context, 6), dp(context, 8), dp(context, 6))
+
+            // center label color
+            // （GestureKeyView 側で黒をデフォルトにしてるので、変えるなら API 化も可能）
+            // show hints
+            showFlickHints = true // ✅ 設定で切り替えたいならここを Pref に
+
+            // 未来の調整ポイント（ユーザー設定に紐づけやすい）
+            centerTextMaxSp = 26
+            centerTextMinSp = 10
+            hintTextMaxSp = 12
+            hintTextMinSp = 7
         }
     }
 
