@@ -21,12 +21,24 @@ import com.kazumaproject.ime_core.plugin.twelvekey.ui.FlickGuideController
 import com.kazumaproject.ime_core.plugin.twelvekey.ui.FlickGuideSpec
 import kotlin.math.roundToInt
 
-open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin {
+open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
+    OverlayHostBindablePlugin {
 
     private var dispatch: ((KeyboardAction) -> Unit)? = null
 
     override fun bind(dispatch: (KeyboardAction) -> Unit) {
         this.dispatch = dispatch
+    }
+
+    // ✅ Provided from BaseImeService (ImeResizableView.root). If null, fallback to plugin host.
+    private var externalOverlayHost: FrameLayout? = null
+
+    // ✅ Keep one controller per plugin instance.
+    private var overlayController: FlickGuideController? = null
+
+    override fun bindOverlayHost(overlayHost: FrameLayout) {
+        externalOverlayHost = overlayHost
+        // controller will be created lazily in createView() when context is ready
     }
 
     enum class LayoutMode { VERTICAL, HORIZONTAL }
@@ -84,15 +96,21 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin {
     override fun createView(context: Context): View {
         val mode = currentLayoutMode(context)
 
-        // ✅ overlay host
-        val host = FrameLayout(context).apply {
+        // plugin's own host (returned view)
+        val pluginHost = FrameLayout(context).apply {
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
         }
 
-        val overlayController = FlickGuideController(host)
+        // ✅ Use external root host if provided; otherwise fallback to pluginHost
+        val overlayHost = externalOverlayHost ?: pluginHost
+
+        // ✅ Create controller once
+        val controller = overlayController ?: FlickGuideController(overlayHost).also {
+            overlayController = it
+        }
 
         val contentRoot = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -105,7 +123,7 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin {
             background = keyboardBackground(context)
         }
 
-        val grid = buildMainGrid(context, overlayController)
+        val grid = buildMainGrid(context, controller, overlayHost)
 
         when (val placement = placementFor(mode)) {
             ActionPlacement.TOP -> {
@@ -158,8 +176,8 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin {
             }
         }
 
-        host.addView(contentRoot)
-        return host
+        pluginHost.addView(contentRoot)
+        return pluginHost
     }
 
     private fun currentLayoutMode(context: Context): LayoutMode {
@@ -167,7 +185,11 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin {
         return if (o == Configuration.ORIENTATION_LANDSCAPE) LayoutMode.HORIZONTAL else LayoutMode.VERTICAL
     }
 
-    private fun buildMainGrid(context: Context, overlay: FlickGuideController): View {
+    private fun buildMainGrid(
+        context: Context,
+        overlay: FlickGuideController,
+        overlayHost: FrameLayout
+    ): View {
         val (rows, cols) = gridSize(context)
         val grid = GridLayout(context).apply {
             rowCount = rows
@@ -177,8 +199,6 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin {
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
             setPadding(dp(context, 8), dp(context, 8), dp(context, 8), dp(context, 8))
-
-            // ✅ 2本指対応（別キーに別ストリームを流す）
             isMotionEventSplittingEnabled = true
         }
 
@@ -186,8 +206,9 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin {
         specs.forEach { spec ->
             val b = keyButton(context, spec.label)
 
-            // overlay wiring
+            // ✅ overlay wiring
             b.guideController = overlay
+            b.guideOverlayHost = overlayHost
             b.guideSpec = spec.toGuideSpec()
 
             b.onGestureResolved = { gesture ->
@@ -364,7 +385,6 @@ private fun KeySpec.toGuideSpec(): FlickGuideSpec {
         down = outputs[KeyGesture.LONG_PRESS_FLICK_DOWN].toLabelOrNull(),
         left = outputs[KeyGesture.LONG_PRESS_FLICK_LEFT].toLabelOrNull(),
     )
-    // long-press layer is meaningful only if any long output exists
     val hasLong = outputs.keys.any { it.name.startsWith("LONG_PRESS") }
     return FlickGuideSpec(normal = normal, longPress = if (hasLong) long else null)
 }

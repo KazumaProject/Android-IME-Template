@@ -22,11 +22,14 @@ class GestureKeyButton @JvmOverloads constructor(
 
     var onGestureResolved: ((KeyGesture) -> Unit)? = null
 
-    /** Provide guide spec for this key (normal + long-press layer). */
     var guideSpec: FlickGuideSpec? = null
-
-    /** Single-overlay controller. */
     var guideController: FlickGuideController? = null
+
+    /**
+     * ✅ IMPORTANT
+     * Rect calculation must use the SAME host where overlay is attached (ImeResizableView.root).
+     */
+    var guideOverlayHost: android.widget.FrameLayout? = null
 
     var flickThresholdPx: Float? = null
 
@@ -46,7 +49,6 @@ class GestureKeyButton @JvmOverloads constructor(
         if (!isDown) return@Runnable
         longPressed = true
 
-        // switch overlay layer to long-press if provided
         guideSpec?.longPress?.let { layer ->
             guideController?.show(anchorRectInOverlayHost(), layer.toGuideTexts())
             guideController?.updatePreview(layer.center)
@@ -90,14 +92,13 @@ class GestureKeyButton @JvmOverloads constructor(
                     if (!longPressed) mainHandler.removeCallbacks(longPressRunnable)
                     dir
                 } else {
-                    // ✅ ここが重要：中心に戻ったらフリック確定を解除する
+                    // 中心に戻ったらフリック確定解除
                     flickDir = null
                     if (longPressed) KeyGesture.LONG_PRESS else KeyGesture.TAP
                 }
 
                 guideController?.highlight(gesture)
 
-                // preview = what will output if released now (based on current layer)
                 val layer = if (longPressed) (guideSpec?.longPress
                     ?: guideSpec?.normal) else guideSpec?.normal
                 layer?.let {
@@ -154,7 +155,6 @@ class GestureKeyButton @JvmOverloads constructor(
                 else -> KeyGesture.LONG_PRESS
             }
         } else {
-            // flickDir が null なら TAP に戻る
             flickDir ?: KeyGesture.TAP
         }
     }
@@ -173,7 +173,8 @@ class GestureKeyButton @JvmOverloads constructor(
     }
 
     private fun anchorRectInOverlayHost(): Rect {
-        val host = nearestFrameLayoutParent() ?: return Rect()
+        val host = guideOverlayHost ?: return Rect()
+
         val locThis = IntArray(2)
         val locHost = IntArray(2)
         getLocationOnScreen(locThis)
@@ -186,15 +187,6 @@ class GestureKeyButton @JvmOverloads constructor(
             locThis[1] - locHost[1] + height
         )
         return tmpRect
-    }
-
-    private fun nearestFrameLayoutParent(): android.widget.FrameLayout? {
-        var p = parent
-        while (p != null) {
-            if (p is android.widget.FrameLayout) return p
-            p = p.parent
-        }
-        return null
     }
 }
 

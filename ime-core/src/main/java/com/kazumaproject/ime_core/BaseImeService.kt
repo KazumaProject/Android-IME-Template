@@ -14,7 +14,6 @@ import com.kazumaproject.ime_core.mvi.KeyboardAction
 import com.kazumaproject.ime_core.plugin.ActionBindablePlugin
 import com.kazumaproject.ime_core.plugin.ImeViewPlugin
 import com.kazumaproject.ime_core.plugin.KanaTwelveKeyPlugin
-import com.kazumaproject.ime_core.plugin.TwelveKeyKeyboardPlugin
 import com.kazumaproject.ime_core.resize.ImeResizeOverlay
 import com.kazumaproject.ime_core.state.CandidateUiMode
 import com.kazumaproject.ime_core.state.ImeState
@@ -180,6 +179,11 @@ open class BaseImeService : InputMethodService(), ImeHost {
     private fun installPluginView() {
         val view = ui ?: return
         val p = plugin ?: return
+
+        // ✅ bind overlay host BEFORE createView()
+        (p as? com.kazumaproject.ime_core.plugin.OverlayHostBindablePlugin)
+            ?.bindOverlayHost(view.root)
+
         pluginView?.let { old -> view.pluginContainer.removeView(old) }
         val v = p.createView(this).apply {
             layoutParams = ViewGroup.LayoutParams(
