@@ -29,16 +29,25 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
         this.dispatch = dispatch
     }
 
-    // ✅ Provided from BaseImeService (ImeResizableView.root). If null, fallback to plugin host.
+    // Provided from BaseImeService (ImeResizableView.root). If null, fallback to plugin host.
     private var externalOverlayHost: FrameLayout? = null
 
-    // ✅ Keep one controller per plugin instance.
+    // Keep one controller per plugin instance.
     private var overlayController: FlickGuideController? = null
 
     override fun bindOverlayHost(overlayHost: FrameLayout) {
         externalOverlayHost = overlayHost
-        // controller will be created lazily in createView() when context is ready
     }
+
+    // ---- dynamic layout params (future-proof) ----
+
+    private var keyMarginDpOverride: Int? = null
+    fun setKeyMarginDpOverride(dp: Int?) {
+        keyMarginDpOverride = dp
+    }
+
+    protected open fun keyMarginDp(context: Context): Int = 4
+    protected open fun gridPaddingDp(context: Context): Int = 8
 
     enum class LayoutMode { VERTICAL, HORIZONTAL }
     enum class ActionPlacement { LEFT, RIGHT, TOP, BOTTOM, LEFT_RIGHT }
@@ -48,8 +57,24 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
         val label: String,
         val action: KeyboardAction,
         val widthWeight: Float = 1f,
-        val heightDp: Int = 44
+        val heightDp: Int = 44 // TOP/BOTTOM用（縦はweightで揃えるので基本未使用）
     )
+
+    /**
+     * Action column layout definition (weight-based).
+     * - Row: 1行に最大2ボタン（横並び）
+     * - Single: 1行に1ボタン（全幅）
+     * - Empty: 空行（スペーサ）
+     */
+    sealed class ActionColumnItem(open val weight: Float) {
+        data class Row(val specs: List<ActionButtonSpec>, override val weight: Float = 1f) :
+            ActionColumnItem(weight)
+
+        data class Single(val spec: ActionButtonSpec, override val weight: Float = 1f) :
+            ActionColumnItem(weight)
+
+        data class Empty(override val weight: Float = 1f) : ActionColumnItem(weight)
+    }
 
     protected open fun placementFor(mode: LayoutMode): ActionPlacement {
         return if (mode == LayoutMode.HORIZONTAL) ActionPlacement.LEFT_RIGHT else ActionPlacement.RIGHT
@@ -92,10 +117,21 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
         }
     }
 
+    /**
+     * Default: simply stacks buttons one per row (weight=1).
+     * Subclasses override to achieve layouts like (1,1,1,2).
+     */
+    protected open fun actionColumnItems(
+        side: ActionSide,
+        mode: LayoutMode
+    ): List<ActionColumnItem> {
+        val list = actionButtonsFor(side, mode)
+        return list.map { ActionColumnItem.Single(it, weight = 1f) }
+    }
+
     override fun createView(context: Context): View {
         val mode = currentLayoutMode(context)
 
-        // plugin's own host (returned view)
         val pluginHost = FrameLayout(context).apply {
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -103,10 +139,7 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
             )
         }
 
-        // ✅ Use external root host if provided; otherwise fallback to pluginHost
         val overlayHost = externalOverlayHost ?: pluginHost
-
-        // ✅ Create controller once
         val controller = overlayController ?: FlickGuideController(overlayHost).also {
             overlayController = it
         }
@@ -132,14 +165,16 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
                 contentRoot.addView(
                     grid,
                     LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0)
-                        .apply { weight = 1f })
+                        .apply { weight = 1f }
+                )
             }
 
             ActionPlacement.BOTTOM -> {
                 contentRoot.addView(
                     grid,
                     LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0)
-                        .apply { weight = 1f })
+                        .apply { weight = 1f }
+                )
                 val bottomRow =
                     buildActionRowHorizontal(context, actionButtonsFor(ActionSide.BOTTOM, mode))
                 contentRoot.addView(bottomRow)
@@ -156,18 +191,21 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
 
                 if (placement == ActionPlacement.LEFT || placement == ActionPlacement.LEFT_RIGHT) {
                     val leftCol =
-                        buildActionColumnVertical(context, actionButtonsFor(ActionSide.LEFT, mode))
+                        buildActionColumnWeighted(context, actionColumnItems(ActionSide.LEFT, mode))
                     if (leftCol != null) row.addView(leftCol)
                 }
 
                 row.addView(
                     grid,
                     LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT)
-                        .apply { weight = 1f })
+                        .apply { weight = 1f }
+                )
 
                 if (placement == ActionPlacement.RIGHT || placement == ActionPlacement.LEFT_RIGHT) {
-                    val rightCol =
-                        buildActionColumnVertical(context, actionButtonsFor(ActionSide.RIGHT, mode))
+                    val rightCol = buildActionColumnWeighted(
+                        context,
+                        actionColumnItems(ActionSide.RIGHT, mode)
+                    )
                     if (rightCol != null) row.addView(rightCol)
                 }
 
@@ -197,15 +235,18 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
-            setPadding(dp(context, 8), dp(context, 8), dp(context, 8), dp(context, 8))
+            val pad = dp(context, gridPaddingDp(context))
+            setPadding(pad, pad, pad, pad)
             isMotionEventSplittingEnabled = true
         }
+
+        val mDp = keyMarginDpOverride ?: keyMarginDp(context)
+        val mPx = dp(context, mDp)
 
         val specs = keySpecs(context)
         specs.forEach { spec ->
             val b = keyButton(context, spec.label)
 
-            // ✅ overlay wiring
             b.guideController = overlay
             b.guideOverlayHost = overlayHost
             b.guideSpec = spec.toGuideSpec()
@@ -220,7 +261,7 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
                 columnSpec = GridLayout.spec(spec.col, spec.colSpan, 1f)
                 width = 0
                 height = 0
-                setMargins(dp(context, 4), dp(context, 4), dp(context, 4), dp(context, 4))
+                setMargins(mPx, mPx, mPx, mPx)
             }
             grid.addView(b, lp)
         }
@@ -267,30 +308,91 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
         return row
     }
 
-    private fun buildActionColumnVertical(context: Context, specs: List<ActionButtonSpec>): View? {
-        if (specs.isEmpty()) return null
+    /**
+     * ✅ Action column: weight-based rows (so you can do 1,1,1,2 proportions)
+     */
+    private fun buildActionColumnWeighted(
+        context: Context,
+        items: List<ActionColumnItem>
+    ): View? {
+        if (items.isEmpty()) return null
 
-        val col = LinearLayout(context).apply {
+        val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
+                dp(context, 72),
                 ViewGroup.LayoutParams.MATCH_PARENT
             ).apply {
                 setMargins(dp(context, 8), dp(context, 8), dp(context, 8), dp(context, 8))
             }
-            gravity = Gravity.CENTER_HORIZONTAL
         }
 
-        specs.forEachIndexed { idx, spec ->
-            val btn = actionButton(context, spec.label) { dispatch?.invoke(spec.action) }
-            col.addView(
-                btn,
-                LinearLayout.LayoutParams(dp(context, 72), dp(context, spec.heightDp)).apply {
-                    if (idx != 0) topMargin = dp(context, 10)
+        items.forEach { item ->
+            val rowContainer = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    0
+                ).apply {
+                    weight = item.weight
                 }
-            )
+            }
+
+            when (item) {
+                is ActionColumnItem.Empty -> {
+                    // spacer only
+                }
+
+                is ActionColumnItem.Single -> {
+                    val btn = actionButton(
+                        context,
+                        item.spec.label
+                    ) { dispatch?.invoke(item.spec.action) }
+                    rowContainer.addView(
+                        btn,
+                        LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                    )
+                }
+
+                is ActionColumnItem.Row -> {
+                    val specs = item.specs.take(2)
+                    if (specs.size == 1) {
+                        val spec = specs[0]
+                        val btn =
+                            actionButton(context, spec.label) { dispatch?.invoke(spec.action) }
+                        rowContainer.addView(
+                            btn,
+                            LinearLayout.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.MATCH_PARENT
+                            )
+                        )
+                    } else if (specs.size == 2) {
+                        specs.forEachIndexed { i, spec ->
+                            val btn =
+                                actionButton(context, spec.label) { dispatch?.invoke(spec.action) }
+                            rowContainer.addView(
+                                btn,
+                                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT)
+                                    .apply {
+                                        weight = 1f
+                                        if (i == 0) marginEnd = dp(context, 3) else marginStart =
+                                            dp(context, 3)
+                                    }
+                            )
+                        }
+                    }
+                }
+            }
+
+            root.addView(rowContainer)
         }
-        return col
+
+        return root
     }
 
     protected fun specCursorLeft(widthWeight: Float = 1f) =
@@ -317,12 +419,9 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
 
     private fun keyButton(context: Context, text: String): GestureKeyView {
         return GestureKeyView(context).apply {
-            // label
             labelText = text
-            allowMultiCharCenterLabel = true // ✅ space/return 等もOK
+            allowMultiCharCenterLabel = true
 
-            // styling (旧ボタン相当)
-            // ここは元の roundedBg をそのまま使える前提
             keyBackgroundDrawable = roundedBg(
                 context,
                 Color.parseColor("#FFF2F2F7"),
@@ -330,12 +429,8 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
                 12
             )
 
-            // center label color
-            // （GestureKeyView 側で黒をデフォルトにしてるので、変えるなら API 化も可能）
-            // show hints
-            showFlickHints = true // ✅ 設定で切り替えたいならここを Pref に
+            showFlickHints = true
 
-            // 未来の調整ポイント（ユーザー設定に紐づけやすい）
             centerTextMaxSp = 26
             centerTextMinSp = 10
             hintTextMaxSp = 12

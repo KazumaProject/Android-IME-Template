@@ -6,80 +6,80 @@ import com.kazumaproject.ime_core.plugin.twelvekey.model.KeyGesture
 import com.kazumaproject.ime_core.plugin.twelvekey.model.KeyOutput
 import com.kazumaproject.ime_core.plugin.twelvekey.model.KeySpec
 
-/**
- * かな配列（12-key）
- * - タップ: 行頭（例: あ）
- * - フリック: 上=い / 右=う / 下=え / 左=お（慣例寄せ）
- * - 長押し: 小書き（例: ぁ）
- *
- * Enter は action column 側で heightDp を2倍にして「縦2つ分」を実現。
- */
 class KanaTwelveKeyPlugin : TwelveKeyKeyboardPlugin() {
 
-    override fun actionButtonsFor(side: ActionSide, mode: LayoutMode): List<ActionButtonSpec> {
-        // デフォルトは RIGHT / LEFT_RIGHT なので、その想定で Enter を縦2つ分にする
-        return when (placementFor(mode)) {
+    override fun actionColumnItems(
+        side: ActionSide,
+        mode: LayoutMode
+    ): List<ActionColumnItem> {
+        val placement = placementFor(mode)
+
+        // TOP/BOTTOM は従来の横並びでOK
+        if (placement == ActionPlacement.TOP || placement == ActionPlacement.BOTTOM) {
+            return super.actionColumnItems(side, mode)
+        }
+
+        return when (placement) {
             ActionPlacement.RIGHT -> {
-                if (side == ActionSide.RIGHT) {
-                    listOf(
-                        specCursorLeft(),
-                        specCursorRight(),
-                        specSpace(),
+                if (side != ActionSide.RIGHT) return emptyList()
+                listOf(
+                    ActionColumnItem.Single(
                         specBackspace(),
-                        // ✅ 縦2つ分（44dp * 2 + 間の見た目分の余白）
-                        specEnter(heightDp = 44 * 2 + 10)
-                    )
-                } else emptyList()
+                        weight = 1f
+                    ),                           // 1
+                    ActionColumnItem.Row(
+                        listOf(specCursorLeft(), specCursorRight()),
+                        weight = 1f
+                    ), // 1
+                    ActionColumnItem.Single(
+                        specSpace(),
+                        weight = 1f
+                    ),                               // 1
+                    ActionColumnItem.Single(
+                        specEnter(),
+                        weight = 2f
+                    ),                               // 2 (4-5行目相当)
+                )
             }
 
             ActionPlacement.LEFT -> {
-                if (side == ActionSide.LEFT) {
-                    listOf(
-                        specCursorLeft(),
-                        specCursorRight(),
-                        specSpace(),
-                        specBackspace(),
-                        specEnter(heightDp = 44 * 2 + 10)
-                    )
-                } else emptyList()
+                if (side != ActionSide.LEFT) return emptyList()
+                listOf(
+                    ActionColumnItem.Single(specBackspace(), weight = 1f),
+                    ActionColumnItem.Row(listOf(specCursorLeft(), specCursorRight()), weight = 1f),
+                    ActionColumnItem.Single(specSpace(), weight = 1f),
+                    ActionColumnItem.Single(specEnter(), weight = 2f),
+                )
             }
 
             ActionPlacement.LEFT_RIGHT -> {
                 when (side) {
-                    ActionSide.LEFT -> listOf(specCursorLeft(), specCursorRight())
+                    ActionSide.LEFT -> listOf(
+                        ActionColumnItem.Single(specBackspace(), weight = 1f),
+                        ActionColumnItem.Row(
+                            listOf(specCursorLeft(), specCursorRight()),
+                            weight = 1f
+                        ),
+                        ActionColumnItem.Empty(weight = 1f),
+                        ActionColumnItem.Empty(weight = 2f),
+                    )
+
                     ActionSide.RIGHT -> listOf(
-                        specSpace(),
-                        specBackspace(),
-                        specEnter(heightDp = 44 * 2 + 10)
+                        ActionColumnItem.Single(specSpace(), weight = 1f),
+                        ActionColumnItem.Empty(weight = 1f),
+                        ActionColumnItem.Empty(weight = 1f),
+                        ActionColumnItem.Single(specEnter(), weight = 2f),
                     )
 
                     else -> emptyList()
                 }
             }
 
-            // TOP/BOTTOM で縦2つ分は意味が変わるので、ここは通常サイズのまま
-            ActionPlacement.TOP -> super.actionButtonsFor(side, mode)
-            ActionPlacement.BOTTOM -> super.actionButtonsFor(side, mode)
+            else -> super.actionColumnItems(side, mode)
         }
     }
 
-    // 既存の specEnter() は heightDp を受け取れないので、ここで同名のヘルパを追加
-    private fun specEnter(widthWeight: Float = 1f, heightDp: Int): ActionButtonSpec {
-        return ActionButtonSpec(
-            "return",
-            KeyboardAction.Enter,
-            widthWeight = widthWeight,
-            heightDp = heightDp
-        )
-    }
-
     override fun keySpecs(context: Context): List<KeySpec> {
-        // 4x3 を前提（row=0..3, col=0..2）
-        // 配列:
-        // [ あ  か  さ ]
-        // [ た  な  は ]
-        // [ ま  や  ら ]
-        // [ わ  、  。 ]
         return listOf(
             kanaKey(
                 "あ",
@@ -206,22 +206,15 @@ class KanaTwelveKeyPlugin : TwelveKeyKeyboardPlugin() {
             put(KeyGesture.FLICK_RIGHT, KeyOutput.Action(KeyboardAction.InputText(right)))
             put(KeyGesture.FLICK_DOWN, KeyOutput.Action(KeyboardAction.InputText(down)))
             put(KeyGesture.FLICK_LEFT, KeyOutput.Action(KeyboardAction.InputText(left)))
-
-            if (small != null) {
-                put(KeyGesture.LONG_PRESS, KeyOutput.Action(KeyboardAction.InputText(small)))
-            }
+            if (small != null) put(
+                KeyGesture.LONG_PRESS,
+                KeyOutput.Action(KeyboardAction.InputText(small))
+            )
         }
-
-        return KeySpec(
-            label = label,
-            row = row,
-            col = col,
-            outputs = outputs
-        )
+        return KeySpec(label = label, row = row, col = col, outputs = outputs)
     }
 
     private fun punctKey(label: String, row: Int, col: Int): KeySpec {
-        // 句読点は単純に（タップ=そのまま、長押しで切り替え程度）
         val outputs = buildMap<KeyGesture, KeyOutput> {
             put(KeyGesture.TAP, KeyOutput.Action(KeyboardAction.InputText(label)))
             put(
@@ -231,12 +224,6 @@ class KanaTwelveKeyPlugin : TwelveKeyKeyboardPlugin() {
             put(KeyGesture.FLICK_UP, KeyOutput.Action(KeyboardAction.InputText("「")))
             put(KeyGesture.FLICK_DOWN, KeyOutput.Action(KeyboardAction.InputText("」")))
         }
-
-        return KeySpec(
-            label = label,
-            row = row,
-            col = col,
-            outputs = outputs
-        )
+        return KeySpec(label = label, row = row, col = col, outputs = outputs)
     }
 }
