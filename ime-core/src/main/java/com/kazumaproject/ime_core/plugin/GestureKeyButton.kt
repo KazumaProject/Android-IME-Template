@@ -23,16 +23,6 @@ import com.kazumaproject.ime_core.plugin.twelvekey.ui.FlickGuideSpec
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-/**
- * Dynamic-resize friendly key view:
- * - Center label (auto-size)
- * - 4-direction flick hints (auto-size, optional)
- * - Handles tap / flick / long-press gestures (same behavior as old GestureKeyButton)
- *
- * This is future-proof for:
- * - Dynamic key size changes
- * - Dynamic font scaling per key / per user setting
- */
 class GestureKeyView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
@@ -47,35 +37,28 @@ class GestureKeyView @JvmOverloads constructor(
         }
 
     var guideController: FlickGuideController? = null
-
-    /** Overlay host where FlickGuideOverlayView is attached (ImeResizableView.root recommended). */
     var guideOverlayHost: FrameLayout? = null
 
-    /** Show small flick hints inside the key. */
     var showFlickHints: Boolean = false
         set(value) {
             field = value
             applyGuideTexts()
         }
 
-    /** Optional: show long label as-is; otherwise center label may shrink/ellipsize. */
     var allowMultiCharCenterLabel: Boolean = true
 
-    /** Key label (center). */
     var labelText: String = ""
         set(value) {
             field = value
             applyCenterLabel()
         }
 
-    /** Background drawable for the key */
     var keyBackgroundDrawable: Drawable? = null
         set(value) {
             field = value
             background = value
         }
 
-    /** Center text appearance control (future settings) */
     var centerTextMaxSp: Int = 26
         set(value) {
             field = value; applyAutoSize()
@@ -85,7 +68,6 @@ class GestureKeyView @JvmOverloads constructor(
             field = value; applyAutoSize()
         }
 
-    /** Hint text appearance control (future settings) */
     var hintTextMaxSp: Int = 12
         set(value) {
             field = value; applyAutoSize()
@@ -97,6 +79,16 @@ class GestureKeyView @JvmOverloads constructor(
 
     var flickThresholdPx: Float? = null
 
+    /**
+     * 親側が「押下中キー」を管理するための通知
+     */
+    interface TouchSessionListener {
+        fun onSessionStart(key: GestureKeyView)
+        fun onSessionEnd(key: GestureKeyView)
+    }
+
+    var sessionListener: TouchSessionListener? = null
+
     private val mainHandler = Handler(Looper.getMainLooper())
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
     private val longPressTimeoutMs = ViewConfiguration.getLongPressTimeout().toLong()
@@ -106,10 +98,12 @@ class GestureKeyView @JvmOverloads constructor(
     private var isDown = false
     private var longPressed = false
     private var flickDir: KeyGesture? = null
+    private var resolvedOnce = false
+
+    // ✅ splitting環境で安全に追跡するため、このキーを押した pointerId を保持
+    private var activePointerId: Int = MotionEvent.INVALID_POINTER_ID
 
     private val tmpRect = Rect()
-
-    // --- child views ---
 
     private val centerLabel = TextView(context).apply {
         gravity = Gravity.CENTER
@@ -117,7 +111,6 @@ class GestureKeyView @JvmOverloads constructor(
         typeface = Typeface.DEFAULT_BOLD
         isSingleLine = true
         ellipsize = TextUtils.TruncateAt.END
-        // remove font padding for stable vertical centering
         includeFontPadding = false
     }
 
@@ -149,24 +142,20 @@ class GestureKeyView @JvmOverloads constructor(
     private fun hintTextView(gravity: Int): TextView {
         return TextView(context).apply {
             this.gravity = Gravity.CENTER
-            setTextColor(0x66000000) // translucent black
+            setTextColor(0x66000000)
             typeface = Typeface.DEFAULT_BOLD
             includeFontPadding = false
             isSingleLine = true
             ellipsize = TextUtils.TruncateAt.END
             visibility = View.GONE
-
-            layoutParams = LayoutParams(
-                LayoutParams.WRAP_CONTENT,
-                LayoutParams.WRAP_CONTENT
-            ).apply {
-                this.gravity = gravity
-            }
+            layoutParams =
+                LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
+                    this.gravity = gravity
+                }
         }
     }
 
     private fun applyAutoSize() {
-        // Center
         TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(
             centerLabel,
             centerTextMinSp,
@@ -174,8 +163,6 @@ class GestureKeyView @JvmOverloads constructor(
             1,
             TypedValue.COMPLEX_UNIT_SP
         )
-
-        // Hints
         val hints = listOf(hintUp, hintRight, hintDown, hintLeft)
         hints.forEach { tv ->
             TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(
@@ -194,7 +181,6 @@ class GestureKeyView @JvmOverloads constructor(
 
     private fun applyGuideTexts() {
         val layer = guideSpec?.normal
-
         if (!showFlickHints || layer == null) {
             hintUp.visibility = View.GONE
             hintRight.visibility = View.GONE
@@ -203,7 +189,6 @@ class GestureKeyView @JvmOverloads constructor(
             return
         }
 
-        // “長い場合は先頭1文字のみ”
         fun oneCharOrNull(s: String?): String? = s?.takeIf { it.isNotBlank() }?.take(1)
 
         val u = oneCharOrNull(layer.up)
@@ -228,32 +213,19 @@ class GestureKeyView @JvmOverloads constructor(
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
 
-        // Key size changes => padding should scale to avoid collisions (future-proof)
         val shortSide = minOf(w, h).toFloat()
         val pad = (shortSide * 0.12f).roundToInt().coerceIn(dp(6), dp(14))
         val hintPad = (shortSide * 0.08f).roundToInt().coerceIn(dp(4), dp(12))
 
-        // Center has larger safe area; hints sit near edges.
         centerLabel.setPadding(pad, pad, pad, pad)
-
-        (hintUp.layoutParams as LayoutParams).apply {
-            topMargin = hintPad
-        }
-        (hintDown.layoutParams as LayoutParams).apply {
-            bottomMargin = hintPad
-        }
-        (hintLeft.layoutParams as LayoutParams).apply {
-            marginStart = hintPad
-        }
-        (hintRight.layoutParams as LayoutParams).apply {
-            marginEnd = hintPad
-        }
+        (hintUp.layoutParams as LayoutParams).topMargin = hintPad
+        (hintDown.layoutParams as LayoutParams).bottomMargin = hintPad
+        (hintLeft.layoutParams as LayoutParams).marginStart = hintPad
+        (hintRight.layoutParams as LayoutParams).marginEnd = hintPad
     }
 
-    // ---- gesture logic (ported from GestureKeyButton) ----
-
     private val longPressRunnable = Runnable {
-        if (!isDown) return@Runnable
+        if (!isDown || resolvedOnce) return@Runnable
         longPressed = true
 
         guideSpec?.longPress?.let { layer ->
@@ -263,16 +235,30 @@ class GestureKeyView @JvmOverloads constructor(
         guideController?.highlight(KeyGesture.LONG_PRESS)
     }
 
+    /**
+     * ✅ 親(プラグイン)から呼ぶ「強制確定」
+     * 2本目が押された瞬間に 1本目キーを確定させる用途。
+     */
+    fun forceCommitFromExternal() {
+        if (!isDown || resolvedOnce) return
+        resolveAndCommit()
+    }
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 parent?.requestDisallowInterceptTouchEvent(true)
                 isDown = true
+                resolvedOnce = false
                 longPressed = false
                 flickDir = null
+
+                activePointerId = event.getPointerId(event.actionIndex)
                 downX = event.x
                 downY = event.y
                 isPressed = true
+
+                sessionListener?.onSessionStart(this)
 
                 guideSpec?.normal?.let { layer ->
                     guideController?.show(anchorRectInOverlayHost(), layer.toGuideTexts())
@@ -286,9 +272,15 @@ class GestureKeyView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_MOVE -> {
-                if (!isDown) return false
-                val dx = event.x - downX
-                val dy = event.y - downY
+                if (!isDown || resolvedOnce) return false
+
+                val idx = event.findPointerIndex(activePointerId)
+                if (idx < 0) return false
+
+                val x = event.getX(idx)
+                val y = event.getY(idx)
+                val dx = x - downX
+                val dy = y - downY
 
                 val threshold = flickThresholdPx ?: defaultFlickThresholdPx()
                 val movedEnough = (abs(dx) >= threshold) || (abs(dy) >= threshold)
@@ -328,27 +320,34 @@ class GestureKeyView @JvmOverloads constructor(
 
             MotionEvent.ACTION_UP -> {
                 if (!isDown) return false
-                mainHandler.removeCallbacks(longPressRunnable)
-                isPressed = false
-                isDown = false
-
-                val resolved = decideGestureOnUp(longPressed, flickDir)
-                onGestureResolved?.invoke(resolved)
-
-                guideController?.hide()
+                if (!resolvedOnce) resolveAndCommit() else cleanup()
                 return true
             }
         }
         return super.onTouchEvent(event)
     }
 
+    private fun resolveAndCommit() {
+        mainHandler.removeCallbacks(longPressRunnable)
+
+        val resolved = decideGestureOnUp(longPressed, flickDir)
+        resolvedOnce = true
+        onGestureResolved?.invoke(resolved)
+
+        cleanup()
+    }
+
     private fun cleanup() {
         mainHandler.removeCallbacks(longPressRunnable)
+
         isPressed = false
         isDown = false
         longPressed = false
         flickDir = null
+        activePointerId = MotionEvent.INVALID_POINTER_ID
+
         guideController?.hide()
+        sessionListener?.onSessionEnd(this)
     }
 
     private fun decideGestureOnUp(longPressed: Boolean, flickDir: KeyGesture?): KeyGesture {
@@ -380,12 +379,10 @@ class GestureKeyView @JvmOverloads constructor(
 
     private fun anchorRectInOverlayHost(): Rect {
         val host = guideOverlayHost ?: return Rect()
-
         val locThis = IntArray(2)
         val locHost = IntArray(2)
         getLocationOnScreen(locThis)
         host.getLocationOnScreen(locHost)
-
         tmpRect.set(
             locThis[0] - locHost[0],
             locThis[1] - locHost[1],

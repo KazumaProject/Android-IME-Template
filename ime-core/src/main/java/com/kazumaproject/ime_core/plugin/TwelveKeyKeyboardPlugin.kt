@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -24,22 +25,20 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
     OverlayHostBindablePlugin {
 
     private var dispatch: ((KeyboardAction) -> Unit)? = null
-
     override fun bind(dispatch: (KeyboardAction) -> Unit) {
         this.dispatch = dispatch
     }
 
-    // Provided from BaseImeService (ImeResizableView.root). If null, fallback to plugin host.
     private var externalOverlayHost: FrameLayout? = null
-
-    // Keep one controller per plugin instance.
     private var overlayController: FlickGuideController? = null
-
     override fun bindOverlayHost(overlayHost: FrameLayout) {
         externalOverlayHost = overlayHost
     }
 
-    // ---- dynamic layout params (future-proof) ----
+    // ✅ 押下中キーを開始順に保持（= 1本目が先頭）
+    private val activeKeys: LinkedHashSet<GestureKeyView> = LinkedHashSet()
+
+    // ---- dynamic layout params ----
 
     private var keyMarginDpOverride: Int? = null
     fun setKeyMarginDpOverride(dp: Int?) {
@@ -57,15 +56,9 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
         val label: String,
         val action: KeyboardAction,
         val widthWeight: Float = 1f,
-        val heightDp: Int = 44 // TOP/BOTTOM用（縦はweightで揃えるので基本未使用）
+        val heightDp: Int = 44
     )
 
-    /**
-     * Action column layout definition (weight-based).
-     * - Row: 1行に最大2ボタン（横並び）
-     * - Single: 1行に1ボタン（全幅）
-     * - Empty: 空行（スペーサ）
-     */
     sealed class ActionColumnItem(open val weight: Float) {
         data class Row(val specs: List<ActionButtonSpec>, override val weight: Float = 1f) :
             ActionColumnItem(weight)
@@ -117,10 +110,6 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
         }
     }
 
-    /**
-     * Default: simply stacks buttons one per row (weight=1).
-     * Subclasses override to achieve layouts like (1,1,1,2).
-     */
     protected open fun actionColumnItems(
         side: ActionSide,
         mode: LayoutMode
@@ -132,17 +121,21 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
     override fun createView(context: Context): View {
         val mode = currentLayoutMode(context)
 
-        val pluginHost = FrameLayout(context).apply {
+        // ✅ 子に配られる前に必ずイベントを監視できる FrameLayout
+        val pluginHost = TouchRouterFrameLayout(context).apply {
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
+            onPointerDown = {
+                // 2本目が来た瞬間に 1本目（開始順先頭）を確定
+                activeKeys.firstOrNull()?.forceCommitFromExternal()
+            }
         }
 
         val overlayHost = externalOverlayHost ?: pluginHost
-        val controller = overlayController ?: FlickGuideController(overlayHost).also {
-            overlayController = it
-        }
+        val controller =
+            overlayController ?: FlickGuideController(overlayHost).also { overlayController = it }
 
         val contentRoot = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -243,9 +236,19 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
         val mDp = keyMarginDpOverride ?: keyMarginDp(context)
         val mPx = dp(context, mDp)
 
-        val specs = keySpecs(context)
-        specs.forEach { spec ->
+        keySpecs(context).forEach { spec ->
             val b = keyButton(context, spec.label)
+
+            // ✅ 押下中キー管理
+            b.sessionListener = object : GestureKeyView.TouchSessionListener {
+                override fun onSessionStart(key: GestureKeyView) {
+                    activeKeys.add(key)
+                }
+
+                override fun onSessionEnd(key: GestureKeyView) {
+                    activeKeys.remove(key)
+                }
+            }
 
             b.guideController = overlay
             b.guideOverlayHost = overlayHost
@@ -308,13 +311,7 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
         return row
     }
 
-    /**
-     * ✅ Action column: weight-based rows (so you can do 1,1,1,2 proportions)
-     */
-    private fun buildActionColumnWeighted(
-        context: Context,
-        items: List<ActionColumnItem>
-    ): View? {
+    private fun buildActionColumnWeighted(context: Context, items: List<ActionColumnItem>): View? {
         if (items.isEmpty()) return null
 
         val root = LinearLayout(context).apply {
@@ -334,15 +331,11 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
                 layoutParams = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     0
-                ).apply {
-                    weight = item.weight
-                }
+                ).apply { weight = item.weight }
             }
 
             when (item) {
-                is ActionColumnItem.Empty -> {
-                    // spacer only
-                }
+                is ActionColumnItem.Empty -> Unit
 
                 is ActionColumnItem.Single -> {
                     val btn = actionButton(
@@ -360,18 +353,7 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
 
                 is ActionColumnItem.Row -> {
                     val specs = item.specs.take(2)
-                    if (specs.size == 1) {
-                        val spec = specs[0]
-                        val btn =
-                            actionButton(context, spec.label) { dispatch?.invoke(spec.action) }
-                        rowContainer.addView(
-                            btn,
-                            LinearLayout.LayoutParams(
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                                ViewGroup.LayoutParams.MATCH_PARENT
-                            )
-                        )
-                    } else if (specs.size == 2) {
+                    if (specs.size == 2) {
                         specs.forEachIndexed { i, spec ->
                             val btn =
                                 actionButton(context, spec.label) { dispatch?.invoke(spec.action) }
@@ -385,6 +367,17 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
                                     }
                             )
                         }
+                    } else if (specs.size == 1) {
+                        val spec = specs[0]
+                        val btn =
+                            actionButton(context, spec.label) { dispatch?.invoke(spec.action) }
+                        rowContainer.addView(
+                            btn,
+                            LinearLayout.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.MATCH_PARENT
+                            )
+                        )
                     }
                 }
             }
@@ -421,16 +414,13 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
         return GestureKeyView(context).apply {
             labelText = text
             allowMultiCharCenterLabel = true
-
             keyBackgroundDrawable = roundedBg(
                 context,
                 Color.parseColor("#FFF2F2F7"),
                 Color.parseColor("#1A000000"),
                 12
             )
-
             showFlickHints = true
-
             centerTextMaxSp = 26
             centerTextMinSp = 10
             hintTextMaxSp = 12
@@ -471,6 +461,20 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
 
     private fun dp(context: Context, v: Int): Int =
         (v * context.resources.displayMetrics.density).roundToInt()
+
+    /**
+     * ✅ 子Viewに配られる前に必ず通るので、ここで POINTER_DOWN を確実に検知できる
+     */
+    private class TouchRouterFrameLayout(context: Context) : FrameLayout(context) {
+        var onPointerDown: (() -> Unit)? = null
+
+        override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+            if (ev.actionMasked == MotionEvent.ACTION_POINTER_DOWN) {
+                onPointerDown?.invoke()
+            }
+            return super.dispatchTouchEvent(ev)
+        }
+    }
 }
 
 /** ---------- guide spec conversion ---------- */
