@@ -212,6 +212,13 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
         overlay: FlickGuideController,
         overlayHost: FrameLayout
     ): View {
+
+        // ✅ マルチタッチ対応:
+        // 新しいキーが押された瞬間に、直前に押下中だったキーを強制確定する。
+        // isMotionEventSplittingEnabled = true だと、別キーでの2本目DOWNは1本目キーへ届かないため
+        // 親(プラグイン)で「押下中キー」を追跡する必要がある。
+        var activeKey: GestureKeyView? = null
+
         val (rows, cols) = gridSize(context)
         val grid = GridLayout(context).apply {
             rowCount = rows
@@ -238,6 +245,22 @@ open class TwelveKeyKeyboardPlugin : ImeViewPlugin, ActionBindablePlugin,
             b.onGestureResolved = { gesture ->
                 val out = spec.outputs[gesture] ?: KeyOutput.Noop
                 dispatchKeyOutput(out)
+            }
+
+            // ✅ マルチタッチ対応:
+            // 別キーが押された瞬間に、前キーを強制確定してから現在キーをactiveにする。
+            b.sessionListener = object : GestureKeyView.TouchSessionListener {
+                override fun onSessionStart(key: GestureKeyView) {
+                    val prev = activeKey
+                    if (prev != null && prev !== key) {
+                        prev.forceCommitFromExternal()
+                    }
+                    activeKey = key
+                }
+
+                override fun onSessionEnd(key: GestureKeyView) {
+                    if (activeKey === key) activeKey = null
+                }
             }
 
             val lp = GridLayout.LayoutParams().apply {
